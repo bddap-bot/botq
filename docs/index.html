@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0b0c">
+<!-- Defense-in-depth: restrict images to same-origin + data: URIs so an agent-authored
+     SVG/image log entry (rendered via <img>) can't passively phone home to an external
+     URL. Only img-src is constrained — script/wasm/style/connect stay unrestricted so
+     the inline module, the blob-imported live UI, the wasm, and the iroh transport keep
+     working. The auth token still can't leak (no script sink reaches agent content). -->
+<meta http-equiv="Content-Security-Policy" content="img-src 'self' data:">
 <title>botq</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">

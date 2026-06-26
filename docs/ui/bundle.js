@@ -84,6 +84,14 @@ const STYLE = `
   .dep-link:hover { background:#1a1a1e; }
   .dep-missing { color:#7a7a7a; border-style:dashed; cursor:default; }
   .botq-detail button.primary { min-height:40px; }
+  /* per-job log panel */
+  .log-head { color:#8a8a8a; font-weight:600; margin:18px 0 8px; }
+  .log-list { display:flex; flex-direction:column; gap:8px; max-width:820px; }
+  .log-entry { background:#141416; border:1px solid #1f1f23; border-radius:6px; padding:8px 10px; }
+  .log-meta { display:flex; gap:8px; align-items:center; color:#7a7a7a; font-size:11px; margin-bottom:4px; }
+  .log-kind { color:#7db3e6; }
+  .log-text { white-space:pre-wrap; word-break:break-word; color:#cfcfcf; margin:0; }
+  .log-img { max-width:100%; height:auto; border-radius:4px; background:#fff; }
   @media (max-width:540px) {
     .botq-detail dl { grid-template-columns:1fr; gap:1px 0; }
     .botq-detail dt { margin-top:9px; }
@@ -236,6 +244,30 @@ export default async function mount(conn, root) {
     dl.append(el('dd', {}, el('div', { className: 'links' }, ids.map(depLink))));
   };
 
+  // Render ONE log entry's content, SANDBOXED by kind. The content is agent-authored
+  // and UNTRUSTED: `text` (and any unknown kind) goes through textContent (never parsed
+  // as markup); `image`/`svg` go through an <img> — an <img>-loaded SVG cannot execute
+  // script (non-interactive by spec), and a non-`data:image` URL or empty svg falls
+  // back to escaped text, so no javascript:/http: src is ever honored. The page's CSP
+  // (img-src 'self' data:) further blocks any external subresource fetch.
+  const renderLogContent = (e) => {
+    if (e.kind === 'image' && /^data:image\//i.test(e.content || '')) {
+      return el('img', { className: 'log-img', src: e.content, loading: 'lazy', alt: 'log image' });
+    }
+    if (e.kind === 'svg' && typeof e.content === 'string' && e.content) {
+      const src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(e.content);
+      return el('img', { className: 'log-img', src, loading: 'lazy', alt: 'log svg' });
+    }
+    return el('p', { className: 'log-text', textContent: e.content || '' });
+  };
+  const renderLogEntry = (e) => el('div', { className: 'log-entry' }, [
+    el('div', { className: 'log-meta' }, [
+      el('span', { textContent: fmtAge(e.created_at), title: fmtAbs(e.created_at) }),
+      e.kind && e.kind !== 'text' ? el('span', { className: 'log-kind', textContent: e.kind }) : null,
+    ]),
+    renderLogContent(e),
+  ]);
+
   const renderDetail = (j) => {
     const back = el('button', { className: 'primary', textContent: '‹ back' });
     back.addEventListener('click', close);
@@ -255,10 +287,16 @@ export default async function mount(conn, root) {
     for (const [label, key] of [['created', 'created_at'], ['claimed', 'claimed_at'], ['heartbeat', 'last_heartbeat'], ['resolved', 'resolved_at']]) {
       if (j[key]) row(dl, label, `${fmtAbs(j[key])}  (${fmtAge(j[key])})`);
     }
-    detail.replaceChildren(
+    const sections = [
       el('div', { className: 'bar' }, [back, el('h2', { textContent: `job #${j.id}` })]),
       dl,
-    );
+    ];
+    const logs = Array.isArray(j.log) ? j.log : [];
+    if (logs.length) {
+      sections.push(el('div', { className: 'log-head', textContent: `log (${logs.length})` }));
+      sections.push(el('div', { className: 'log-list' }, logs.map(renderLogEntry)));
+    }
+    detail.replaceChildren(...sections);
   };
 
   // --- top-level render: pick a view, keep chrome current ---
