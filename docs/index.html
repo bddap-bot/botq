@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0c">
+<title>botq</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0b0b0c; color: #e6e6e6;
+    font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    padding: max(env(safe-area-inset-top), 12px) 12px 12px;
+  }
+  header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .5px; }
+  #status { color: #9a9a9a; font-size: 12px; }
+  #status.ok { color: #5ec27a; }
+  #status.err { color: #e0584e; }
+  #gate { display: grid; gap: 8px; max-width: 640px; }
+  textarea {
+    width: 100%; min-height: 76px; resize: vertical;
+    background: #141416; color: #e6e6e6; border: 1px solid #2a2a2e;
+    border-radius: 6px; padding: 8px; font: inherit;
+  }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    background: #1d1d20; color: #e6e6e6; border: 1px solid #34343a;
+    border-radius: 6px; padding: 8px 14px; font: inherit; cursor: pointer;
+  }
+  button:hover { background: #26262b; }
+  button.primary { border-color: #3a5; }
+  #app { margin-top: 6px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>botq</h1>
+  <span id="status">paste token to connect</span>
+</header>
+
+<div id="gate">
+  <textarea id="token" placeholder="paste your `botq dash-token` here" autocomplete="off" spellcheck="false"></textarea>
+  <div class="row">
+    <button id="connect" class="primary">Connect</button>
+    <button id="forget" class="hidden">Forget token</button>
+  </div>
+</div>
+
+<div id="app"></div>
+
+<script type="module">
+import wbgInit, { init as wasmInit, connect, send, recv } from './botq_dash_wasm.js';
+
+const KEY = 'botq.token';
+const $ = (id) => document.getElementById(id);
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+function setStatus(msg, cls) {
+  const s = $('status');
+  s.textContent = msg;
+  s.className = cls || '';
+}
+
+// base64url (no padding) <-> bytes/text. The wasm wrapper speaks raw bytes; all
+// JSON framing is assembled here.
+function b64urlToBytes(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+const b64urlToText = (s) => dec.decode(b64urlToBytes(s));
+const jsonBytes = (obj) => enc.encode(JSON.stringify(obj));
+const parse = (bytes) => JSON.parse(dec.decode(bytes));
+
+// The connection plumbing. `request` is one send→recv round-trip; `subscribe`
+// issues `sub_<kind>` then streams every pushed frame to `cb` (first the snapshot,
+// then deltas). A subscription owns the recv stream, so `request` and `subscribe`
+// must not overlap — the bootstrap does all its `request` calls (auth, get_ui)
+// BEFORE handing the UI a subscribe-ONLY handle (see below), which makes that
+// invariant structural rather than a thing the UI has to remember.
+const conn = {
+  async request(obj) { return parse(await send(jsonBytes(obj))); },
+  async subscribe(kind, cb) {
+    cb(parse(await send(jsonBytes({ op: `sub_${kind}` }))));
+    for (;;) cb(parse(await recv()));
+  },
+};
+
+async function start(token) {
+  setStatus('decoding token…');
+  let t;
+  try { t = JSON.parse(b64urlToText(token.trim())); }
+  catch { return setStatus('token is not valid base64url JSON', 'err'); }
+  if (!t.endpoint_id || !t.secret) return setStatus('token missing endpoint_id/secret', 'err');
+
+  try {
+    setStatus('loading wasm…');
+    await wbgInit();
+    wasmInit();
+
+    setStatus('connecting over iroh…');
+    const target = t.relay_url ? `${t.endpoint_id}@${t.relay_url}` : t.endpoint_id;
+    await connect(target);
+
+    setStatus('authenticating…');
+    const authResp = await conn.request({ auth: t.secret });
+    if (!authResp.ok) return setStatus('auth rejected — wrong secret', 'err');
+
+    // Auth OK → persist the token so a reload reconnects without re-pasting.
+    localStorage.setItem(KEY, token.trim());
+    $('forget').classList.remove('hidden');
+
+    setStatus('loading dashboard…');
+    const { ui_b64 } = await conn.request({ op: 'get_ui' });
+    const src = b64urlToText(ui_b64);
+    const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+    const mod = await import(url);
+    URL.revokeObjectURL(url);
+
+    setStatus('connected', 'ok');
+    $('gate').classList.add('hidden');
+    // Subscribe-only handle: the UI cannot issue `request` (and thus cannot race a
+    // `send` against its own subscription's `recv` loop) — the footgun is gone by
+    // construction, not by convention.
+    await mod.default({ subscribe: (kind, cb) => conn.subscribe(kind, cb) }, $('app'));
+  } catch (e) {
+    setStatus(`error: ${e && e.message ? e.message : e}`, 'err');
+  }
+}
+
+$('connect').addEventListener('click', () => start($('token').value));
+$('forget').addEventListener('click', () => {
+  localStorage.removeItem(KEY);
+  location.reload();
+});
+
+// Auto-reconnect with a saved token.
+const saved = localStorage.getItem(KEY);
+if (saved) {
+  $('token').value = saved;
+  $('forget').classList.remove('hidden');
+  start(saved);
+}
+</script>
+</body>
+</html>
