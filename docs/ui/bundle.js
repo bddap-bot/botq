@@ -1,6 +1,8 @@
 // botq dashboard UI — served over the iroh tunnel by `botq dash` (GET_UI), so it
 // iterates with no GH-Pages redeploy. Default-export is the entry the bootstrap
-// calls with a `conn` ({ subscribe }) and the mount element.
+// calls with a `conn` ({ subscribe, send }) and the mount element. `send(obj)` is a
+// fire-and-forget owner→server write (no reply) — used for the detail view's two
+// owner controls: send a message to the triage queue, and instruct a running worker.
 //
 // It subscribes to the job stream: the first frame is the full `{jobs:[…]}`
 // snapshot, then each `{job_delta:<row>}` patches one row in place. Rows are kept
@@ -92,6 +94,19 @@ const STYLE = `
   .log-kind { color:#7db3e6; }
   .log-text { white-space:pre-wrap; word-break:break-word; color:#cfcfcf; margin:0; }
   .log-img { max-width:100%; height:auto; border-radius:4px; background:#fff; }
+  /* owner→server control boxes (send to triage / instruct worker) */
+  .ctl-head { color:#8a8a8a; font-weight:600; margin:18px 0 8px; }
+  .ctl-box { display:flex; flex-direction:column; gap:7px; max-width:820px; margin-bottom:14px; }
+  .ctl-box .label { color:#9a9a9a; font-size:12px; }
+  .ctl-box textarea { width:100%; min-height:56px; resize:vertical; background:#141416; color:#e6e6e6;
+    border:1px solid #2a2a2e; border-radius:6px; padding:9px; font:inherit; }
+  .ctl-box .actions { display:flex; gap:8px; align-items:center; }
+  .ctl-box button { background:#1d1d20; color:#e6e6e6; border:1px solid #34343a; border-radius:6px;
+    padding:9px 13px; font:inherit; cursor:pointer; min-height:38px; }
+  .ctl-box button:hover { background:#26262b; }
+  .ctl-box button:disabled { opacity:.5; cursor:default; }
+  .ctl-status { font-size:12px; color:#7a7a7a; }
+  .ctl-status.ok { color:#5ec27a; } .ctl-status.err { color:#e0584e; }
   @media (max-width:540px) {
     .botq-detail dl { grid-template-columns:1fr; gap:1px 0; }
     .botq-detail dt { margin-top:9px; }
@@ -108,6 +123,16 @@ export default async function mount(conn, root) {
   let typeSel = '';             // '' ⇒ all types
   let openId = null;            // null ⇒ list; else the job id whose detail is shown
   let lastDetailSig = null;     // skip detail rebuilds (and scroll jumps) when unchanged
+  // Owner control-box drafts, preserved across detail rebuilds so a live job's deltas
+  // don't wipe half-typed input. Reset when the open job changes (`ctlForJob`).
+  let ctlForJob = null;
+  const ctlDraft = { send_triage: '', instruct: '' };
+  // True while a control-box send is in flight. The render() guard skips detail
+  // rebuilds during it: a delta arriving mid-`await conn.send` would otherwise
+  // replaceChildren and detach the status/button nodes `submit()` writes to once the
+  // await resolves (the textarea is already blurred by the click, so the typing-guard
+  // alone doesn't cover this). The deferred delta lands on the next tick after.
+  let ctlBusy = false;
 
   // --- filter bar ---
   const search = el('input', {
@@ -268,7 +293,51 @@ export default async function mount(conn, root) {
     renderLogContent(e),
   ]);
 
+  // One owner→server control box: a labelled textarea + a send button + a status line.
+  // `op` is the write op (`send_triage` | `instruct`); the draft persists in `ctlDraft`
+  // so a rebuild (a live delta) can't wipe in-progress input. `conn.send` is
+  // fire-and-forget, so the button just reflects sent/failed — there's no reply to
+  // await. On success the draft clears and the instruct's own job_log mirror will flow
+  // back through the normal subscription.
+  const controlBox = (j, op, label, placeholder, buttonText) => {
+    const status = el('span', { className: 'ctl-status' });
+    // Announce send/error to assistive tech, and (on a phone) keep the line live even
+    // when it's below the fold after the keyboard dismisses.
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    const ta = el('textarea', { placeholder, value: ctlDraft[op] || '', spellcheck: true });
+    ta.addEventListener('input', () => { ctlDraft[op] = ta.value; });
+    // NB: deliberately NO blur→render here. It looks tempting (apply a delta deferred by
+    // the typing-guard the moment focus leaves), but blur fires on the mousedown that
+    // begins a "send" CLICK — a synchronous render() would replaceChildren and detach
+    // the very button mid-click (losing the click) and the status nodes submit() writes
+    // to. The next subscription delta (a claimed job heartbeats often) or the 30s ticker
+    // re-renders instead; the only residual is typing an instruct as the worker resolves,
+    // which lands a harmless unconsumed inbox row.
+    const btn = el('button', { textContent: buttonText });
+    const submit = async () => {
+      const text = ta.value.trim();
+      if (!text) { status.textContent = 'nothing to send'; status.className = 'ctl-status err'; return; }
+      btn.disabled = true; ctlBusy = true; status.textContent = 'sending…'; status.className = 'ctl-status';
+      try {
+        await conn.send({ op, job_id: j.id, text });
+        status.textContent = 'sent ✓'; status.className = 'ctl-status ok';
+        ta.value = ''; ctlDraft[op] = '';
+      } catch (e) {
+        status.textContent = `error: ${e && e.message ? e.message : e}`; status.className = 'ctl-status err';
+      } finally { btn.disabled = false; ctlBusy = false; }
+    };
+    btn.addEventListener('click', submit);
+    return el('div', { className: 'ctl-box' }, [
+      el('div', { className: 'label', textContent: label }),
+      ta,
+      el('div', { className: 'actions' }, [btn, status]),
+    ]);
+  };
+
   const renderDetail = (j) => {
+    // Drafts are per-job: switching to a different job's detail starts fresh.
+    if (ctlForJob !== j.id) { ctlDraft.send_triage = ''; ctlDraft.instruct = ''; ctlForJob = j.id; }
     const back = el('button', { className: 'primary', textContent: '‹ back' });
     back.addEventListener('click', close);
     const dl = el('dl');
@@ -291,6 +360,24 @@ export default async function mount(conn, root) {
       el('div', { className: 'bar' }, [back, el('h2', { textContent: `job #${j.id}` })]),
       dl,
     ];
+    // Owner controls (owner→server writes, post-auth) go ABOVE the log so they stay
+    // reachable on a phone without scrolling past a long live log — instruct, the
+    // speed-matters case, must be quick to reach. A triage MESSAGE attaches to any job
+    // (a note for the hub); both echo into this job's log below the moment they land.
+    // An INSTRUCT only reaches a RUNNING worker (it drains its inbox with `botq inbox`
+    // between steps), so it's offered only while `claimed` (the literal mirrors
+    // `Status::Claimed.tag()` on the Rust side — search there if the tag is renamed).
+    sections.push(el('div', { className: 'ctl-head', textContent: 'owner controls' }));
+    sections.push(controlBox(j, 'send_triage', 'send a message to the triage queue',
+      'a note for the hub about this job…', 'send to triage'));
+    if (j.status === 'claimed') {
+      sections.push(controlBox(j, 'instruct', 'instruct / redirect the running worker',
+        'an instruction the worker will pick up between steps…', 'instruct worker'));
+    } else {
+      sections.push(el('div', { className: 'ctl-box' }, [
+        el('div', { className: 'label', textContent: `instruct: unavailable (worker runs only while claimed; this job is ${j.status})` }),
+      ]));
+    }
     const logs = Array.isArray(j.log) ? j.log : [];
     if (logs.length) {
       sections.push(el('div', { className: 'log-head', textContent: `log (${logs.length})` }));
@@ -313,7 +400,12 @@ export default async function mount(conn, root) {
       // Include dependents (a whole-map derivation, not part of `j`) so the detail
       // rebuilds when a NEW job starts depending on the open one.
       const sig = openId + ' ' + JSON.stringify(j) + ' deps:' + dependentsOf(openId).join(',');
-      if (sig !== lastDetailSig) {
+      // Don't rebuild while the owner is typing in a control box — a rebuild replaces
+      // the textarea node, dropping focus/caret mid-instruction. `lastDetailSig` stays
+      // stale so the deferred delta is applied on the next render after they blur/submit
+      // (drafts are preserved either way, but skipping also keeps focus).
+      const typing = detail.contains(document.activeElement) && document.activeElement.tagName === 'TEXTAREA';
+      if (sig !== lastDetailSig && !typing && !ctlBusy) {
         const top = detail.scrollTop;
         renderDetail(j);
         detail.scrollTop = top;

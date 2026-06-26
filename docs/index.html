@@ -71,7 +71,7 @@
 <div id="app"></div>
 
 <script type="module">
-import wbgInit, { init as wasmInit, connect, send, recv } from './botq_dash_wasm.js';
+import wbgInit, { init as wasmInit, connect, send, recv, send_only } from './botq_dash_wasm.js';
 
 const KEY = 'botq.token';
 const $ = (id) => document.getElementById(id);
@@ -117,6 +117,12 @@ const conn = {
     cb(parse(await send(jsonBytes({ op: `sub_${kind}` }))));
     for (;;) cb(parse(await recv()));
   },
+  // A fire-and-forget WRITE: writes on the send half only and awaits NO reply, so it
+  // is safe to call WHILE subscribed — it never races the subscription's recv loop
+  // (the footgun `request` would hit). This is the owner→server write channel the UI
+  // uses for `send_triage` / `instruct`. Resolves once the bytes are flushed; a
+  // transport failure rejects.
+  async sendOnly(obj) { await send_only(jsonBytes(obj)); },
 };
 
 async function start(token) {
@@ -153,10 +159,15 @@ async function start(token) {
     URL.revokeObjectURL(url);
 
     setStatus('connected', 'ok');
-    // Subscribe-only handle: the UI cannot issue `request` (and thus cannot race a
-    // `send` against its own subscription's `recv` loop) — the footgun is gone by
-    // construction, not by convention.
-    await mod.default({ subscribe: (kind, cb) => conn.subscribe(kind, cb) }, $('app'));
+    // The UI handle: `subscribe` (the read stream) + `send` (fire-and-forget owner
+    // writes). It deliberately does NOT expose `request` (send→recv), so the UI can't
+    // race a reply-awaiting call against its own subscription's recv loop — that
+    // footgun stays gone by construction. `send` is reply-free, so it composes safely
+    // with an active subscription.
+    await mod.default({
+      subscribe: (kind, cb) => conn.subscribe(kind, cb),
+      send: (obj) => conn.sendOnly(obj),
+    }, $('app'));
   } catch (e) {
     setStatus(`error: ${e && e.message ? e.message : e}`, 'err');
   }
