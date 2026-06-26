@@ -14,7 +14,8 @@
   body {
     margin: 0; background: #0b0b0c; color: #e6e6e6;
     font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    padding: max(env(safe-area-inset-top), 12px) 12px 12px;
+    padding: max(env(safe-area-inset-top), 12px) 12px calc(env(safe-area-inset-bottom) + 12px);
+    -webkit-text-size-adjust: 100%;
   }
   header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
   h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .5px; }
@@ -25,17 +26,19 @@
   textarea {
     width: 100%; min-height: 76px; resize: vertical;
     background: #141416; color: #e6e6e6; border: 1px solid #2a2a2e;
-    border-radius: 6px; padding: 8px; font: inherit;
+    border-radius: 6px; padding: 10px; font: inherit;
   }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   button {
     background: #1d1d20; color: #e6e6e6; border: 1px solid #34343a;
-    border-radius: 6px; padding: 8px 14px; font: inherit; cursor: pointer;
+    border-radius: 6px; padding: 10px 14px; font: inherit; cursor: pointer;
+    min-height: 40px;            /* comfortable touch target */
   }
   button:hover { background: #26262b; }
   button.primary { border-color: #3a5; }
+  #saved-note { color: #9a9a9a; align-self: center; margin-right: 4px; }
   #app { margin-top: 6px; }
-  .hidden { display: none; }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
@@ -44,12 +47,19 @@
   <span id="status">paste token to connect</span>
 </header>
 
+<!-- Token entry. Once a token is saved we NEVER render it back into the DOM (it
+     embeds the auth secret) — the input is hidden and #saved shows instead. -->
 <div id="gate">
-  <textarea id="token" placeholder="paste your `botq dash-token` here" autocomplete="off" spellcheck="false"></textarea>
+  <textarea id="token" placeholder="paste your `botq dash-token` here" autocomplete="off" spellcheck="false" inputmode="text"></textarea>
   <div class="row">
     <button id="connect" class="primary">Connect</button>
-    <button id="forget" class="hidden">Forget token</button>
   </div>
+</div>
+
+<div id="saved" class="row hidden">
+  <span id="saved-note">🔒 token saved on this device</span>
+  <button id="reenter">Use a different token</button>
+  <button id="forget">Forget token</button>
 </div>
 
 <div id="app"></div>
@@ -66,6 +76,13 @@ function setStatus(msg, cls) {
   const s = $('status');
   s.textContent = msg;
   s.className = cls || '';
+}
+
+// Show either the token input (no saved token) or the saved-state row (token on
+// file) — never both. The token VALUE is never put back in the DOM once saved.
+function showSavedState(saved) {
+  $('gate').classList.toggle('hidden', saved);
+  $('saved').classList.toggle('hidden', !saved);
 }
 
 // base64url (no padding) <-> bytes/text. The wasm wrapper speaks raw bytes; all
@@ -116,9 +133,11 @@ async function start(token) {
     const authResp = await conn.request({ auth: t.secret });
     if (!authResp.ok) return setStatus('auth rejected — wrong secret', 'err');
 
-    // Auth OK → persist the token so a reload reconnects without re-pasting.
+    // Auth OK → persist the token, then scrub it from the DOM and switch to the
+    // saved-state UI so the secret is never displayed again (owner request).
     localStorage.setItem(KEY, token.trim());
-    $('forget').classList.remove('hidden');
+    $('token').value = '';
+    showSavedState(true);
 
     setStatus('loading dashboard…');
     const { ui_b64 } = await conn.request({ op: 'get_ui' });
@@ -128,7 +147,6 @@ async function start(token) {
     URL.revokeObjectURL(url);
 
     setStatus('connected', 'ok');
-    $('gate').classList.add('hidden');
     // Subscribe-only handle: the UI cannot issue `request` (and thus cannot race a
     // `send` against its own subscription's `recv` loop) — the footgun is gone by
     // construction, not by convention.
@@ -139,18 +157,27 @@ async function start(token) {
 }
 
 $('connect').addEventListener('click', () => start($('token').value));
+$('reenter').addEventListener('click', () => {
+  $('token').value = '';
+  showSavedState(false);
+  $('token').focus();
+});
 $('forget').addEventListener('click', () => {
   localStorage.removeItem(KEY);
   location.reload();
 });
 
-// Auto-reconnect with a saved token.
-const saved = localStorage.getItem(KEY);
-if (saved) {
-  $('token').value = saved;
-  $('forget').classList.remove('hidden');
-  start(saved);
+// Make the page installable (Add to Home Screen / app list on Firefox-Android,
+// which requires a registered SW with a fetch handler). Failure is non-fatal.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
 }
+
+// Auto-reconnect with a saved token — WITHOUT ever rendering the token (the input
+// stays empty/hidden; the saved-state row shows instead).
+const saved = localStorage.getItem(KEY);
+if (saved) { showSavedState(true); start(saved); }
+else { showSavedState(false); }
 </script>
 </body>
 </html>
