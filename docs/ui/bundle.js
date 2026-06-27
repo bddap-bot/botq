@@ -107,6 +107,18 @@ const STYLE = `
   .ctl-box button:disabled { opacity:.5; cursor:default; }
   .ctl-status { font-size:12px; color:#7a7a7a; }
   .ctl-status.ok { color:#5ec27a; } .ctl-status.err { color:#e0584e; }
+  /* pluggable panels: operator-configured command output (HTML), each framed in a
+     sandboxed iframe so it can't run script or disturb the dashboard's layout/JS */
+  .botq-panels { display:flex; flex-direction:column; gap:8px; margin:0 0 12px; }
+  .panel-box { border:1px solid #1f1f23; border-radius:8px; background:#0e0e10; overflow:hidden; }
+  .panel-head { display:flex; flex-wrap:wrap; gap:8px; align-items:baseline; padding:8px 10px;
+    background:#141416; border-bottom:1px solid #1f1f23; }
+  .panel-name { font-weight:600; }
+  .panel-meta { color:#7a7a7a; font-size:11px; }
+  .panel-badge { color:#e0584e; font-size:11px; margin-left:auto; max-width:60vw;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .panel-frame { width:100%; border:0; height:160px; background:#0b0b0c; display:block; }
+  .panel-err { color:#e0584e; padding:10px; white-space:pre-wrap; word-break:break-word; }
   @media (max-width:540px) {
     .botq-detail dl { grid-template-columns:1fr; gap:1px 0; }
     .botq-detail dt { margin-top:9px; }
@@ -118,6 +130,7 @@ export default async function mount(conn, root) {
 
   // --- view state ---
   const jobs = new Map();
+  const panels = new Map();     // name → latest panel render (operator-configured command HTML)
   let text = '';
   const stateSel = new Set();   // empty ⇒ all states
   let typeSel = '';             // '' ⇒ all types
@@ -148,9 +161,13 @@ export default async function mount(conn, root) {
   const count = el('span', { id: 'botq-count' });
   const bar = el('div', { id: 'botq-bar' }, [search, typeFx, chips, count]);
 
+  // Pluggable panels region — above the filter bar so a status panel (e.g. quota) is
+  // the first thing seen. Shown only in list view (hidden behind the detail overlay).
+  const panelsRegion = el('div', { className: 'botq-panels', style: 'display:none' });
+
   const list = el('div', { className: 'botq-list' });
   const detail = el('div', { className: 'botq-detail', style: 'display:none' });
-  root.append(bar, list, detail);
+  root.append(panelsRegion, bar, list, detail);
 
   // --- helpers ---
   const matches = (j) => {
@@ -386,6 +403,51 @@ export default async function mount(conn, root) {
     detail.replaceChildren(...sections);
   };
 
+  // --- pluggable panels ---
+  // A panel's HTML is operator-authored (the command is configured by an owner with
+  // full machine access), but we still frame it in a SANDBOXED iframe so it can neither
+  // run script in the dashboard's origin (the page holds the auth token) nor disturb
+  // the surrounding layout/JS. `sandbox="allow-same-origin"` WITHOUT `allow-scripts`:
+  // no script can execute in the frame at all, so the same-origin grant is inert for
+  // the child — it exists only so the PARENT may read the rendered document to auto-size
+  // the frame to its content. This is the same "let the browser's sandbox enforce
+  // isolation, never innerHTML untrusted-ish markup ourselves" approach the per-kind log
+  // rendering uses (text→textContent, image/svg→<img>); HTML's right primitive is the
+  // iframe. The page CSP (img-src 'self' data:) still applies inside the frame.
+  const renderPanelBody = (p) => {
+    if (p.error && !p.html) return el('div', { className: 'panel-err', textContent: p.error });
+    const frame = el('iframe', { className: 'panel-frame', loading: 'lazy', title: p.name });
+    frame.setAttribute('sandbox', 'allow-same-origin');     // set BEFORE srcdoc so it governs the load
+    frame.srcdoc = p.html || '';
+    frame.addEventListener('load', () => {
+      try {
+        const h = frame.contentWindow.document.body.scrollHeight;
+        if (h) frame.style.height = Math.min(h + 4, 640) + 'px';   // fit content, capped (then scrolls)
+      } catch { /* measurement blocked — keep the default height */ }
+    });
+    return frame;
+  };
+  const renderPanel = (p) => {
+    const head = el('div', { className: 'panel-head' }, [
+      el('span', { className: 'panel-name', textContent: p.name }),
+      el('span', { className: 'panel-meta', textContent: p.ran_at ? `ran ${fmtAge(p.ran_at)}` : 'pending…' }),
+    ]);
+    if (p.error) head.append(el('span', { className: 'panel-badge', textContent: `⚠ ${p.error}`, title: p.error }));
+    return el('div', { className: 'panel-box' }, [head, renderPanelBody(p)]);
+  };
+  // Visibility is gated by view (list only) AND non-emptiness, applied from both the
+  // top-level render() and renderPanels() so either trigger keeps it correct.
+  const applyPanelVisibility = () => {
+    panelsRegion.style.display = (openId == null && panels.size) ? '' : 'none';
+  };
+  // Rebuild the whole region on any panel change. Panels update on their own (slow)
+  // cadence, so the rare iframe reload is a non-issue; jobs deltas never call this.
+  const renderPanels = () => {
+    const rows = [...panels.values()].sort((a, b) => a.name.localeCompare(b.name));
+    panelsRegion.replaceChildren(...rows.map(renderPanel));
+    applyPanelVisibility();
+  };
+
   // --- top-level render: pick a view, keep chrome current ---
   const render = () => {
     renderChips();
@@ -418,6 +480,7 @@ export default async function mount(conn, root) {
       bar.style.display = ''; list.style.display = '';
       renderList();
     }
+    applyPanelVisibility();   // panels show only in list view; keep that in sync with the view
   };
 
   // Re-render every 30s so the "Ns ago" stamps stay honest with no deltas.
@@ -425,9 +488,14 @@ export default async function mount(conn, root) {
 
   try {
     await conn.subscribe('jobs', (msg) => {
-      if (msg.jobs) { jobs.clear(); for (const j of msg.jobs) jobs.set(j.id, j); }
-      else if (msg.job_delta) jobs.set(msg.job_delta.id, msg.job_delta);
-      render();
+      // Jobs and panels share the one subscription (the protocol multiplexes a single
+      // bi-stream). Job frames re-render the list; panel frames rebuild only the panels
+      // region (no need to touch the job list) — see the server's `subscribe`.
+      if (msg.jobs) { jobs.clear(); for (const j of msg.jobs) jobs.set(j.id, j); render(); }
+      else if (msg.job_delta) { jobs.set(msg.job_delta.id, msg.job_delta); render(); }
+      else if (msg.panels) { panels.clear(); for (const p of msg.panels) panels.set(p.name, p); renderPanels(); }
+      else if (msg.panel_delta) { panels.set(msg.panel_delta.name, msg.panel_delta); renderPanels(); }
+      else if (msg.panel_removed) { panels.delete(msg.panel_removed); renderPanels(); }
     });
   } catch (e) {
     clearInterval(ticker);
