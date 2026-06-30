@@ -174,7 +174,7 @@ export default async function mount(conn, root) {
     if (stateSel.size && !stateSel.has(j.status)) return false;
     if (typeSel && j.type !== typeSel) return false;
     if (text) {
-      const hay = `${j.id} ${j.type || ''} ${j.status || ''} ${j.priority || ''} ${j.completion || ''}`.toLowerCase();
+      const hay = `${j.id} ${j.type || ''} ${j.status || ''} ${j.priority || ''} ${j.remediation || ''} ${j.completion || ''}`.toLowerCase();
       if (!hay.includes(text)) return false;
     }
     return true;
@@ -261,6 +261,11 @@ export default async function mount(conn, root) {
             el('span', { className: 'ty', textContent: j.type || '' }),
             el('span', { className: 'st', style: `color:${STATE_COLOR[j.status] || '#e6e6e6'}`, textContent: j.status || '' }),
             el('span', { className: j.priority === 'beef' ? 'pri-beef' : 'pri-quick', textContent: j.priority || '' }),
+            // An UNREMEDIATED drop (botq#remediation) gets a loud badge so it can't hide
+            // in the list — it stays flagged until `botq remediate`, independent of any ack.
+            j.remediation === 'unremediated'
+              ? el('span', { style: 'color:#e0584e;font-weight:600;font-size:11px', textContent: '⚠ unremediated' })
+              : null,
           ]),
           j.completion ? el('div', { className: 'completion', textContent: j.completion }) : null,
         ]),
@@ -362,6 +367,16 @@ export default async function mount(conn, root) {
     row(dl, 'type', j.type);
     row(dl, 'priority', j.priority);
     row(dl, 'status', j.status);
+    // Remediation disposition (botq#remediation): present only on a hub-facing drop.
+    // 'unremediated' = a drop still needing a root-cause+fix+requeue (run `botq
+    // remediate`); 'remediated' shows the fix ref + requeue disposition + who.
+    if (j.remediation === 'unremediated') {
+      row(dl, 'remediation', 'UNREMEDIATED — needs `botq remediate`');
+    } else if (j.remediation === 'remediated') {
+      const parts = [j.remediation_fix, j.remediation_requeue, j.remediated_by && `by ${j.remediated_by}`]
+        .filter(Boolean).join(' · ');
+      row(dl, 'remediation', `remediated${parts ? ' — ' + parts : ''}`);
+    }
     row(dl, 'verdict', typeof j.verdict === 'string' ? j.verdict : '');
     row(dl, 'completion', j.completion, { block: true });
     row(dl, 'result', j.result, { block: true });
