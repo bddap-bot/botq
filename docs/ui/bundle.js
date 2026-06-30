@@ -204,6 +204,23 @@ export default async function mount(conn, root) {
     render();
   });
 
+  // Deep-link: `…/#/job/<N>` opens job N. A HASH route (not a path) because GH-Pages
+  // has no server-side routing — the hash survives the bootstrap's auth + get_ui
+  // untouched and needs no 404 fallback. Read the target once; apply it as soon as
+  // that job is in the map (first snapshot, or a later delta), then stop. Read-only:
+  // navigating the detail uses history state (above), not the hash, so we never write
+  // it back — the hash is just the entry point the hub's link carries. `hashchange`
+  // lets the owner retarget from the address bar within the same authed session.
+  const hashJobId = () => {
+    const m = /^#\/job\/(\d+)$/.exec(location.hash);
+    return m ? Number(m[1]) : null;
+  };
+  let pendingDeepLink = hashJobId();
+  const applyDeepLink = () => {
+    if (pendingDeepLink != null && jobs.has(pendingDeepLink)) { open(pendingDeepLink); pendingDeepLink = null; }
+  };
+  window.addEventListener('hashchange', () => { pendingDeepLink = hashJobId(); applyDeepLink(); });
+
   // A clickable pill that jumps to job `id`'s detail (or shows it greyed if the row
   // isn't in view yet — e.g. a dep that hasn't streamed).
   const depLink = (id) => {
@@ -506,8 +523,8 @@ export default async function mount(conn, root) {
       // Jobs and panels share the one subscription (the protocol multiplexes a single
       // bi-stream). Job frames re-render the list; panel frames rebuild only the panels
       // region (no need to touch the job list) — see the server's `subscribe`.
-      if (msg.jobs) { jobs.clear(); for (const j of msg.jobs) jobs.set(j.id, j); render(); }
-      else if (msg.job_delta) { jobs.set(msg.job_delta.id, msg.job_delta); render(); }
+      if (msg.jobs) { jobs.clear(); for (const j of msg.jobs) jobs.set(j.id, j); render(); applyDeepLink(); }
+      else if (msg.job_delta) { jobs.set(msg.job_delta.id, msg.job_delta); render(); applyDeepLink(); }
       else if (msg.panels) { panels.clear(); for (const p of msg.panels) panels.set(p.name, p); renderPanels(); }
       else if (msg.panel_delta) { panels.set(msg.panel_delta.name, msg.panel_delta); renderPanels(); }
       else if (msg.panel_removed) { panels.delete(msg.panel_removed); renderPanels(); }
