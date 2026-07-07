@@ -174,7 +174,7 @@ export default async function mount(conn, root) {
     if (stateSel.size && !stateSel.has(j.status)) return false;
     if (typeSel && j.type !== typeSel) return false;
     if (text) {
-      const hay = `${j.id} ${j.type || ''} ${j.status || ''} ${j.priority || ''} ${j.remediation || ''} ${j.completion || ''}`.toLowerCase();
+      const hay = `${j.id} ${j.type || ''} ${j.status || ''} ${j.priority || ''} ${j.model || ''} ${j.remediation || ''} ${j.completion || ''}`.toLowerCase();
       if (!hay.includes(text)) return false;
     }
     return true;
@@ -278,6 +278,11 @@ export default async function mount(conn, root) {
             el('span', { className: 'ty', textContent: j.type || '' }),
             el('span', { className: 'st', style: `color:${STATE_COLOR[j.status] || '#e6e6e6'}`, textContent: j.status || '' }),
             el('span', { className: j.priority === 'beef' ? 'pri-beef' : 'pri-quick', textContent: j.priority || '' }),
+            // Explicit model route (bothouse#132) — present ONLY on a routed job, so the
+            // badge itself is the "this is not fable" marker (absent = fable default).
+            j.model
+              ? el('span', { style: 'color:#c792ea;font-weight:600;font-size:11px', textContent: j.model })
+              : null,
             // An UNREMEDIATED drop (botq#remediation) gets a loud badge so it can't hide
             // in the list — it stays flagged until `botq remediate`, independent of any ack.
             j.remediation === 'unremediated'
@@ -383,6 +388,7 @@ export default async function mount(conn, root) {
     row(dl, 'id', `#${j.id}`);
     row(dl, 'type', j.type);
     row(dl, 'priority', j.priority);
+    if (j.model) row(dl, 'model', `${j.model} (explicit route, bothouse#132)`);
     row(dl, 'status', j.status);
     // Remediation disposition (botq#remediation): present only on a hub-facing drop.
     // 'unremediated' = a drop still needing a root-cause+fix+requeue (run `botq
