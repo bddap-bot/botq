@@ -3,6 +3,9 @@
 // calls with a `conn` ({ subscribe, send }) and the mount element. `send(obj)` is a
 // fire-and-forget owner→server write (no reply) — used for the detail view's two
 // owner controls: send a message to the triage queue, and instruct a running worker.
+// The detail view renders the job's MESSAGE THREAD (bothouse#162): log rows with
+// kind==='message' — owner posts from this page, hub/gate inbox entries, delivery
+// bounces — shown above the compose boxes so a reply is visible to the human.
 //
 // It subscribes to the job stream: the first frame is the full `{jobs:[…]}`
 // snapshot, then each `{job_delta:<row>}` patches one row in place. Rows are kept
@@ -95,6 +98,9 @@ const STYLE = `
   .log-kind { color:#7db3e6; }
   .log-text { white-space:pre-wrap; word-break:break-word; color:#cfcfcf; margin:0; }
   .log-img { max-width:100%; height:auto; border-radius:4px; background:#fff; }
+  /* message-thread entries (bothouse#162): the same card as a log row, accented so
+     the conversation reads as a thread; sender identity lives in the content text */
+  .msg-entry { border-left:3px solid #7db3e6; }
   /* owner→server control boxes (send to triage / instruct worker) */
   .ctl-head { color:#8a8a8a; font-weight:600; margin:18px 0 8px; }
   .ctl-box { display:flex; flex-direction:column; gap:7px; max-width:820px; margin-bottom:14px; }
@@ -337,6 +343,15 @@ export default async function mount(conn, root) {
     ]),
     renderLogContent(e),
   ]);
+  // A thread message (kind==='message'): always text, sender label leads the content
+  // ("📨 owner (dash) → …", "📨 hub → worker: …", "⛔ not delivered — …"), so no
+  // kind badge — the accent border marks it as conversation.
+  const renderMsgEntry = (e) => el('div', { className: 'log-entry msg-entry' }, [
+    el('div', { className: 'log-meta' }, [
+      el('span', { textContent: fmtAge(e.created_at), title: fmtAbs(e.created_at) }),
+    ]),
+    el('p', { className: 'log-text', textContent: e.content || '' }),
+  ]);
 
   // One owner→server control box: a labelled textarea + a send button + a status line.
   // `op` is the write op (`send_triage` | `instruct`); the draft persists in `ctlDraft`
@@ -443,13 +458,25 @@ export default async function mount(conn, root) {
       el('div', { className: 'bar' }, [back, el('h2', { textContent: `job #${j.id}` })]),
       dl,
     ];
-    // Owner controls (owner→server writes, post-auth) go ABOVE the log so they stay
-    // reachable on a phone without scrolling past a long live log — instruct, the
-    // speed-matters case, must be quick to reach. A triage MESSAGE attaches to any job
-    // (a note for the hub); both echo into this job's log below the moment they land.
-    // An INSTRUCT only reaches a RUNNING worker (it drains its inbox with `botq inbox`
-    // between steps), so it's offered only while `claimed` (the literal mirrors
-    // `Status::Claimed.tag()` on the Rust side — search there if the tag is renamed).
+    // Message THREAD (bothouse#162), then owner controls, then the ordinary log —
+    // all ABOVE the log so they stay reachable on a phone without scrolling past a
+    // long live tail. Thread entries are the kind==='message' log rows (keyed on
+    // the kind tag — structure, not emoji matching): owner posts from this page,
+    // hub/gate inbox entries, and delivery bounces, each echoing back through the
+    // normal subscription the moment it lands — a reply is visible right here.
+    const logs = Array.isArray(j.log) ? j.log : [];
+    const msgs = logs.filter((e) => e.kind === 'message');
+    const rest = logs.filter((e) => e.kind !== 'message');
+    if (msgs.length) {
+      sections.push(el('div', { className: 'log-head', textContent: `messages (${msgs.length})` }));
+      sections.push(el('div', { className: 'log-list' }, msgs.map(renderMsgEntry)));
+    }
+    // Owner controls (owner→server writes, post-auth). A triage MESSAGE attaches to
+    // any job (a note for the hub). An INSTRUCT only reaches a RUNNING worker (it
+    // drains its inbox with `botq inbox` between steps), so it's offered only while
+    // `claimed` (the literal mirrors `Status::Claimed.tag()` on the Rust side —
+    // search there if the tag is renamed); the server bounces an instruct that
+    // races a job going terminal, and the bounce shows up in the thread above.
     sections.push(el('div', { className: 'ctl-head', textContent: 'owner controls' }));
     sections.push(controlBox(j, 'send_triage', 'send a message to the triage queue',
       'a note for the hub about this job…', 'send to triage'));
@@ -461,10 +488,9 @@ export default async function mount(conn, root) {
         el('div', { className: 'label', textContent: `instruct: unavailable (worker runs only while claimed; this job is ${j.status})` }),
       ]));
     }
-    const logs = Array.isArray(j.log) ? j.log : [];
-    if (logs.length) {
-      sections.push(el('div', { className: 'log-head', textContent: `log (${logs.length})` }));
-      sections.push(el('div', { className: 'log-list' }, logs.map(renderLogEntry)));
+    if (rest.length) {
+      sections.push(el('div', { className: 'log-head', textContent: `log (${rest.length})` }));
+      sections.push(el('div', { className: 'log-list' }, rest.map(renderLogEntry)));
     }
     detail.replaceChildren(...sections);
   };
