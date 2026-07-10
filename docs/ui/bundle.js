@@ -79,6 +79,7 @@ const STYLE = `
   .botq-detail dd { margin:0; color:#e6e6e6; word-break:break-word; white-space:pre-wrap; }
   .botq-detail dd.block { background:#141416; border:1px solid #1f1f23; border-radius:6px; padding:8px;
     max-height:46vh; overflow:auto; }
+  .botq-detail dd.block summary { cursor:pointer; color:#9a9a9a; white-space:normal; }
   .botq-detail .links { display:flex; flex-wrap:wrap; gap:6px; }
   .dep-link { cursor:pointer; border:1px solid #2a2a2e; border-radius:6px; padding:7px 11px;
     display:inline-flex; align-items:center; min-height:36px;
@@ -380,6 +381,10 @@ export default async function mount(conn, root) {
   };
 
   const renderDetail = (j) => {
+    // Capture the prompt <details> open state BEFORE replaceChildren discards it —
+    // a live delta rebuild must not collapse a prompt the owner is reading. Reset
+    // (like the drafts) when the open job changes.
+    const promptOpen = ctlForJob === j.id && !!detail.querySelector('dd.block details')?.open;
     // Drafts are per-job: switching to a different job's detail starts fresh.
     if (ctlForJob !== j.id) { ctlDraft.send_triage = ''; ctlDraft.instruct = ''; ctlForJob = j.id; }
     const back = el('button', { className: 'primary', textContent: '‹ back' });
@@ -402,6 +407,29 @@ export default async function mount(conn, root) {
     }
     row(dl, 'verdict', typeof j.verdict === 'string' ? j.verdict : '');
     row(dl, 'completion', j.completion, { block: true });
+    // The payload prompt — the job's full description (bddap/bothouse#151). Gated on
+    // field PRESENCE, not truthiness: null/'' = a payload-invariant violation on a
+    // current server (render the placeholder), absent = a pre-#151 server (render
+    // nothing). Plain text via textContent per the XSS discipline; collapsed behind
+    // <details> when long so the metadata grid stays scannable. The open state is
+    // preserved across rebuilds via `promptOpen` (captured above) — same spirit as
+    // the scrollTop preservation, else a heartbeat delta snaps it shut mid-read.
+    if ('prompt' in j) {
+      const text = j.prompt || '(payload has no prompt)';
+      dl.append(el('dt', { textContent: 'prompt' }));
+      const body = text.length > 500
+        ? el('details', { open: promptOpen }, [
+            // slice by code point (spread), not code unit, so an emoji straddling the
+            // cut can't render as a lone surrogate; 241 units always cover 120 points.
+            el('summary', { textContent: [...text.slice(0, 241)].slice(0, 120).join('').replace(/\s+/g, ' ') + '…' }),
+            el('div', { textContent: text }),
+          ])
+        : el('span', { textContent: text });
+      dl.append(el('dd', { className: 'block' }, body));
+    }
+    // Fork lineage: a thin prompt is self-explaining when the worker forked a
+    // transcript (context rides the fork). Presence-gated like `prompt`.
+    if ('fork_source' in j) row(dl, 'origin', j.fork_source ? `fork of ${j.fork_source}` : 'fresh');
     row(dl, 'result', j.result, { block: true });
     row(dl, 'tokens', j.tokens_spent ? j.tokens_spent.toLocaleString() : '');
     row(dl, 'claimed by', j.claimed_by);
