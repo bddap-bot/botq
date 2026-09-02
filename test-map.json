@@ -1,0 +1,38 @@
+{
+  "about": "Touched-path → test-suite map, read by `botq test-map` (bddap/bothouse#236). First matching rule wins; `tests: []` means consciously untested and must carry its why.",
+  "rules": [
+    {
+      "paths": [
+        "docs/ui/**",
+        "test/**",
+        "test-map.json"
+      ],
+      "tests": [
+        "node --test test/*.test.js"
+      ],
+      "why": "the served dashboard module's pure helpers"
+    },
+    {
+      "paths": [
+        "docs/**"
+      ],
+      "tests": [],
+      "why": "the GH-Pages bootstrap (wasm client + static page) has no headless harness; verified by opening the page"
+    },
+    {
+      "paths": [
+        "wasm/**"
+      ],
+      "tests": [],
+      "why": "the wasm iroh client has no unit tests; wasm/build.sh builds it and the served page proves it"
+    },
+    {
+      "paths": [
+        "README.md",
+        ".gitignore"
+      ],
+      "tests": [],
+      "why": "prose"
+    }
+  ]
+}

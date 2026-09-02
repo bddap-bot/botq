@@ -36,6 +36,12 @@ const fmtAge = (epoch) => {
 const fmtAbs = (epoch) =>
   epoch ? new Date(epoch * 1000).toISOString().replace('T', ' ').slice(0, 19) + 'Z' : '';
 
+export const captureScroll = (els) => new Map(els.map((e) => [e.dataset.scroll, e.scrollTop]));
+export const restoreScroll = (els, saved) => {
+  for (const e of els) e.scrollTop = saved.get(e.dataset.scroll) ?? 0;
+};
+const scrollers = (root) => [root, ...root.querySelectorAll('[data-scroll]')];
+
 const el = (tag, props = {}, children = []) => {
   const n = document.createElement(tag);
   Object.assign(n, props);
@@ -143,9 +149,7 @@ export default async function mount(conn, root) {
   let typeSel = '';             // '' ⇒ all types
   let openId = null;            // null ⇒ list; else the job id whose detail is shown
   let lastDetailSig = null;     // skip detail rebuilds (and scroll jumps) when unchanged
-  // Owner control-box drafts, preserved across detail rebuilds so a live job's deltas
-  // don't wipe half-typed input. Reset when the open job changes (`ctlForJob`).
-  let ctlForJob = null;
+  let shownJob = null;
   const ctlDraft = { send_triage: '', instruct: '' };
   // True while a control-box send is in flight. The render() guard skips detail
   // rebuilds during it: a delta arriving mid-`await conn.send` would otherwise
@@ -174,6 +178,7 @@ export default async function mount(conn, root) {
 
   const list = el('div', { className: 'botq-list' });
   const detail = el('div', { className: 'botq-detail', style: 'display:none' });
+  detail.dataset.scroll = 'detail';
   root.append(panelsRegion, bar, list, detail);
 
   // --- helpers ---
@@ -309,10 +314,15 @@ export default async function mount(conn, root) {
   };
 
   // --- detail view ---
+  const block = (label, body) => {
+    const dd = el('dd', { className: 'block' }, body);
+    dd.dataset.scroll = label;
+    return dd;
+  };
   const row = (dl, label, value, opts = {}) => {
     if (value == null || value === '') return;
     dl.append(el('dt', { textContent: label }));
-    dl.append(el('dd', Object.assign({ textContent: String(value) }, opts.block ? { className: 'block' } : {})));
+    dl.append(opts.block ? block(label, String(value)) : el('dd', { textContent: String(value) }));
   };
   const linkRow = (dl, label, ids) => {
     if (!ids || !ids.length) return;
@@ -396,12 +406,9 @@ export default async function mount(conn, root) {
   };
 
   const renderDetail = (j) => {
-    // Capture the prompt <details> open state BEFORE replaceChildren discards it —
-    // a live delta rebuild must not collapse a prompt the owner is reading. Reset
-    // (like the drafts) when the open job changes.
-    const promptOpen = ctlForJob === j.id && !!detail.querySelector('dd.block details')?.open;
+    const promptOpen = shownJob === j.id && !!detail.querySelector('dd.block details')?.open;
     // Drafts are per-job: switching to a different job's detail starts fresh.
-    if (ctlForJob !== j.id) { ctlDraft.send_triage = ''; ctlDraft.instruct = ''; ctlForJob = j.id; }
+    if (shownJob !== j.id) { ctlDraft.send_triage = ''; ctlDraft.instruct = ''; shownJob = j.id; }
     const back = el('button', { className: 'primary', textContent: '‹ back' });
     back.addEventListener('click', close);
     const dl = el('dl');
@@ -426,9 +433,7 @@ export default async function mount(conn, root) {
     // field PRESENCE, not truthiness: null/'' = a payload-invariant violation on a
     // current server (render the placeholder), absent = a pre-#151 server (render
     // nothing). Plain text via textContent per the XSS discipline; collapsed behind
-    // <details> when long so the metadata grid stays scannable. The open state is
-    // preserved across rebuilds via `promptOpen` (captured above) — same spirit as
-    // the scrollTop preservation, else a heartbeat delta snaps it shut mid-read.
+    // <details> when long so the metadata grid stays scannable.
     if ('prompt' in j) {
       const text = j.prompt || '(payload has no prompt)';
       dl.append(el('dt', { textContent: 'prompt' }));
@@ -440,7 +445,7 @@ export default async function mount(conn, root) {
             el('div', { textContent: text }),
           ])
         : el('span', { textContent: text });
-      dl.append(el('dd', { className: 'block' }, body));
+      dl.append(block('prompt', body));
     }
     // Fork lineage: a thin prompt is self-explaining when the worker forked a
     // transcript (context rides the fork). Presence-gated like `prompt`.
@@ -547,9 +552,6 @@ export default async function mount(conn, root) {
     if (openId != null && jobs.has(openId)) {
       bar.style.display = list.style.display = 'none';
       detail.style.display = '';
-      // Only rebuild when the open job's data actually changed, and preserve scroll
-      // across the rebuild — otherwise a live job's deltas (or the 30s ticker) would
-      // snap a phone reader back to the top mid-read.
       const j = jobs.get(openId);
       // Include dependents (a whole-map derivation, not part of `j`) so the detail
       // rebuilds when a NEW job starts depending on the open one.
@@ -560,9 +562,10 @@ export default async function mount(conn, root) {
       // (drafts are preserved either way, but skipping also keeps focus).
       const typing = detail.contains(document.activeElement) && document.activeElement.tagName === 'TEXTAREA';
       if (sig !== lastDetailSig && !typing && !ctlBusy) {
-        const top = detail.scrollTop;
+        const showing = lastDetailSig != null && shownJob === j.id;
+        const saved = showing ? captureScroll(scrollers(detail)) : new Map();
         renderDetail(j);
-        detail.scrollTop = top;
+        restoreScroll(scrollers(detail), saved);
         lastDetailSig = sig;
       }
     } else {
