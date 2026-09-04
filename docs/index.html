@@ -51,6 +51,7 @@
 <header>
   <h1>botq</h1>
   <span id="status">paste token to connect</span>
+  <a href="https://bddap-bot.github.io/voice/">🎙 voice</a>
 </header>
 
 <!-- Token entry. Once a token is saved we NEVER render it back into the DOM (it
@@ -139,7 +140,7 @@ async function start(token) {
 
     setStatus('connecting over iroh…');
     const target = t.relay_url ? `${t.endpoint_id}@${t.relay_url}` : t.endpoint_id;
-    await connect(target);
+    await connect(target, 'botq-dash/0');
 
     setStatus('authenticating…');
     const authResp = await conn.request({ auth: t.secret });

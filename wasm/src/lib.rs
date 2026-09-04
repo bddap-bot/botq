@@ -1,4 +1,6 @@
-//! botq-dash-wasm — browser (wasm32) iroh client for the botq dashboard.
+//! botq-dash-wasm — browser (wasm32) iroh client for the botq dashboard and any
+//! sibling page that speaks length-prefixed frames to a bothouse endpoint (the
+//! caller names the ALPN).
 //!
 //! Relay-only by construction: in a browser iroh cannot open UDP sockets, so the
 //! N0 endpoint preset's only viable path is WebSocket → relay → native node. The
@@ -15,9 +17,6 @@ use iroh::{
     endpoint::Connection, Endpoint, EndpointAddr, EndpointId, RelayUrl,
 };
 use wasm_bindgen::prelude::*;
-
-/// ALPN for the dashboard protocol (matches Half B's `botq dash` acceptor).
-const ALPN: &[u8] = b"botq-dash/0";
 
 thread_local! {
     static ENDPOINT: RefCell<Option<Endpoint>> = const { RefCell::new(None) };
@@ -67,18 +66,18 @@ async fn ensure_endpoint() -> Result<Endpoint> {
 /// into an `EndpointAddr` here. Format: `"<endpoint_id>@<relay_url>"`, or a bare
 /// `"<endpoint_id>"` (relay then discovered via the N0 preset's pkarr/DNS discovery).
 #[wasm_bindgen]
-pub async fn connect(ticket: &str) -> Result<(), JsError> {
-    connect_inner(ticket).await.map_err(js_err)
+pub async fn connect(ticket: &str, alpn: &str) -> Result<(), JsError> {
+    connect_inner(ticket, alpn.as_bytes()).await.map_err(js_err)
 }
 
-async fn connect_inner(ticket: &str) -> Result<()> {
+async fn connect_inner(ticket: &str, alpn: &[u8]) -> Result<()> {
     let ep = ensure_endpoint().await?;
     let addr = parse_addr(ticket)?;
 
     // `connect` takes `impl Into<EndpointAddr>`; the relay URL in the addr is what
     // the browser uses (no UDP path is possible in wasm, so it's relay-only).
     let conn = ep
-        .connect(addr, ALPN)
+        .connect(addr, alpn)
         .await
         .context("iroh connect failed")?;
 

@@ -12,7 +12,7 @@ cargo build --release --target wasm32-unknown-unknown
 # opt-level="z" + lto already minimize it, and a wasm-opt pass measured LARGER, so
 # there's no opt step in the shipped path.
 wasm-bindgen --target web --out-dir pkg \
-  target/wasm32-unknown-unknown/release/botq_dash_wasm.wasm
+  "${CARGO_TARGET_DIR:-target}"/wasm32-unknown-unknown/release/botq_dash_wasm.wasm
 
 cp pkg/botq_dash_wasm.js pkg/botq_dash_wasm_bg.wasm ../docs/
 echo "refreshed ../docs/botq_dash_wasm.{js,wasm}"
