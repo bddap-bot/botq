@@ -1,20 +1,3 @@
-// botq dashboard UI — served over the iroh tunnel by `botq dash` (GET_UI), so it
-// iterates with no GH-Pages redeploy. Default-export is the entry the bootstrap
-// calls with a `conn` ({ subscribe, send }) and the mount element. `send(obj)` is a
-// fire-and-forget owner→server write (no reply) — used for the detail view's two
-// owner controls: send a message to the triage queue, and instruct a running worker.
-// The detail view renders the job's MESSAGE THREAD (bothouse#162): log rows with
-// kind==='message' — owner posts from this page, hub/gate inbox entries, delivery
-// bounces — shown above the compose boxes so a reply is visible to the human.
-//
-// It subscribes to the job stream: the first frame is the full `{jobs:[…]}`
-// snapshot, then each `{job_delta:<row>}` patches one row in place. Rows are kept
-// in an id→row map. Two views over that map: a filtered card LIST and, when a card
-// is tapped, a full-screen DETAIL overlay with every field + links to/from deps.
-//
-// XSS discipline: the page holds the auth token, and job fields (completion,
-// result, verdict, type) are agent-authored. EVERYTHING is built from elements +
-// textContent — never innerHTML — so no job-derived string can become markup.
 
 const STATE_ORDER = {
   queued: 0, blocked: 1, deferred: 2, claimed: 3,
@@ -104,8 +87,6 @@ const STYLE = `
   .log-kind { color:#7db3e6; }
   .log-text { white-space:pre-wrap; word-break:break-word; color:#cfcfcf; margin:0; }
   .log-img { max-width:100%; height:auto; border-radius:4px; background:#fff; }
-  /* message-thread entries (bothouse#162): the same card as a log row, accented so
-     the conversation reads as a thread; sender identity lives in the content text */
   .msg-entry { border-left:3px solid #7db3e6; }
   /* owner→server control boxes (send to triage / instruct worker) */
   .ctl-head { color:#8a8a8a; font-weight:600; margin:18px 0 8px; }
@@ -141,7 +122,6 @@ const STYLE = `
 export default async function mount(conn, root) {
   root.append(el('style', { textContent: STYLE }));
 
-  // --- view state ---
   const jobs = new Map();
   const panels = new Map();     // name → latest panel render (operator-configured command HTML)
   let text = '';
@@ -151,14 +131,8 @@ export default async function mount(conn, root) {
   let lastDetailSig = null;     // skip detail rebuilds (and scroll jumps) when unchanged
   let shownJob = null;
   const ctlDraft = { send_triage: '', instruct: '' };
-  // True while a control-box send is in flight. The render() guard skips detail
-  // rebuilds during it: a delta arriving mid-`await conn.send` would otherwise
-  // replaceChildren and detach the status/button nodes `submit()` writes to once the
-  // await resolves (the textarea is already blurred by the click, so the typing-guard
-  // alone doesn't cover this). The deferred delta lands on the next tick after.
   let ctlBusy = false;
 
-  // --- filter bar ---
   const search = el('input', {
     id: 'botq-search', type: 'search', placeholder: 'filter id / type / completion…',
     autocomplete: 'off', spellcheck: false,
@@ -172,8 +146,6 @@ export default async function mount(conn, root) {
   const count = el('span', { id: 'botq-count' });
   const bar = el('div', { id: 'botq-bar' }, [search, typeFx, chips, count]);
 
-  // Pluggable panels region — above the filter bar so a status panel (e.g. quota) is
-  // the first thing seen. Shown only in list view (hidden behind the detail overlay).
   const panelsRegion = el('div', { className: 'botq-panels', style: 'display:none' });
 
   const list = el('div', { className: 'botq-list' });
@@ -181,7 +153,6 @@ export default async function mount(conn, root) {
   detail.dataset.scroll = 'detail';
   root.append(panelsRegion, bar, list, detail);
 
-  // --- helpers ---
   const matches = (j) => {
     if (stateSel.size && !stateSel.has(j.status)) return false;
     if (typeSel && j.type !== typeSel) return false;
@@ -197,10 +168,6 @@ export default async function mount(conn, root) {
     [...jobs.values()].filter((j) => depsOf(j).includes(id)).map((j) => j.id);
   const stateDot = (s) => el('span', { textContent: '●', style: `color:${STATE_COLOR[s] || '#9a9a9a'}` });
 
-  // Detail is a history entry so Android's system Back closes it (instead of exiting
-  // the PWA). Opening from the list pushes one entry; navigating detail→detail (dep
-  // links) replaces it, so Back always returns to the list in one step. The back
-  // button just pops; popstate is the single place that applies the resulting view.
   const open = (id) => {
     if (openId == null) history.pushState({ botqJob: id }, '');
     else history.replaceState({ botqJob: id }, '');
@@ -216,13 +183,6 @@ export default async function mount(conn, root) {
     render();
   });
 
-  // Deep-link: `…/#/job/<N>` opens job N. A HASH route (not a path) because GH-Pages
-  // has no server-side routing — the hash survives the bootstrap's auth + get_ui
-  // untouched and needs no 404 fallback. Read the target once; apply it as soon as
-  // that job is in the map (first snapshot, or a later delta), then stop. Read-only:
-  // navigating the detail uses history state (above), not the hash, so we never write
-  // it back — the hash is just the entry point the hub's link carries. `hashchange`
-  // lets the owner retarget from the address bar within the same authed session.
   const hashJobId = () => {
     const m = /^#\/job\/(\d+)$/.exec(location.hash);
     return m ? Number(m[1]) : null;
@@ -233,8 +193,6 @@ export default async function mount(conn, root) {
   };
   window.addEventListener('hashchange', () => { pendingDeepLink = hashJobId(); applyDeepLink(); });
 
-  // A clickable pill that jumps to job `id`'s detail (or shows it greyed if the row
-  // isn't in view yet — e.g. a dep that hasn't streamed).
   const depLink = (id) => {
     if (!jobs.has(id)) return el('span', { className: 'dep-link dep-missing', textContent: `#${id}` });
     const j = jobs.get(id);
@@ -246,7 +204,6 @@ export default async function mount(conn, root) {
     return p;
   };
 
-  // --- list view ---
   const renderChips = () => {
     const counts = {};
     for (const j of jobs.values()) counts[j.status] = (counts[j.status] || 0) + 1;
@@ -290,13 +247,9 @@ export default async function mount(conn, root) {
             el('span', { className: 'ty', textContent: j.type || '' }),
             el('span', { className: 'st', style: `color:${STATE_COLOR[j.status] || '#e6e6e6'}`, textContent: j.status || '' }),
             el('span', { className: j.priority === 'beef' ? 'pri-beef' : 'pri-quick', textContent: j.priority || '' }),
-            // Explicit model route (bothouse#132) — present ONLY on a routed job, so the
-            // badge itself is the "this is not fable" marker (absent = fable default).
             j.model
               ? el('span', { style: 'color:#c792ea;font-weight:600;font-size:11px', textContent: j.model })
               : null,
-            // An UNREMEDIATED drop (botq#remediation) gets a loud badge so it can't hide
-            // in the list — it stays flagged until `botq remediate`, independent of any ack.
             j.remediation === 'unremediated'
               ? el('span', { style: 'color:#e0584e;font-weight:600;font-size:11px', textContent: '⚠ unremediated' })
               : null,
@@ -313,7 +266,6 @@ export default async function mount(conn, root) {
     }
   };
 
-  // --- detail view ---
   const block = (label, body) => {
     const dd = el('dd', { className: 'block' }, body);
     dd.dataset.scroll = label;
@@ -330,12 +282,6 @@ export default async function mount(conn, root) {
     dl.append(el('dd', {}, el('div', { className: 'links' }, ids.map(depLink))));
   };
 
-  // Render ONE log entry's content, SANDBOXED by kind. The content is agent-authored
-  // and UNTRUSTED: `text` (and any unknown kind) goes through textContent (never parsed
-  // as markup); `image`/`svg` go through an <img> — an <img>-loaded SVG cannot execute
-  // script (non-interactive by spec), and a non-`data:image` URL or empty svg falls
-  // back to escaped text, so no javascript:/http: src is ever honored. The page's CSP
-  // (img-src 'self' data:) further blocks any external subresource fetch.
   const renderLogContent = (e) => {
     if (e.kind === 'image' && /^data:image\//i.test(e.content || '')) {
       return el('img', { className: 'log-img', src: e.content, loading: 'lazy', alt: 'log image' });
@@ -353,9 +299,6 @@ export default async function mount(conn, root) {
     ]),
     renderLogContent(e),
   ]);
-  // A thread message (kind==='message'): always text, sender label leads the content
-  // ("📨 owner (dash) → …", "📨 hub → worker: …", "⛔ not delivered — …"), so no
-  // kind badge — the accent border marks it as conversation.
   const renderMsgEntry = (e) => el('div', { className: 'log-entry msg-entry' }, [
     el('div', { className: 'log-meta' }, [
       el('span', { textContent: fmtAge(e.created_at), title: fmtAbs(e.created_at) }),
@@ -363,27 +306,12 @@ export default async function mount(conn, root) {
     el('p', { className: 'log-text', textContent: e.content || '' }),
   ]);
 
-  // One owner→server control box: a labelled textarea + a send button + a status line.
-  // `op` is the write op (`send_triage` | `instruct`); the draft persists in `ctlDraft`
-  // so a rebuild (a live delta) can't wipe in-progress input. `conn.send` is
-  // fire-and-forget, so the button just reflects sent/failed — there's no reply to
-  // await. On success the draft clears and the instruct's own job_log mirror will flow
-  // back through the normal subscription.
   const controlBox = (j, op, label, placeholder, buttonText) => {
     const status = el('span', { className: 'ctl-status' });
-    // Announce send/error to assistive tech, and (on a phone) keep the line live even
-    // when it's below the fold after the keyboard dismisses.
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
     const ta = el('textarea', { placeholder, value: ctlDraft[op] || '', spellcheck: true });
     ta.addEventListener('input', () => { ctlDraft[op] = ta.value; });
-    // NB: deliberately NO blur→render here. It looks tempting (apply a delta deferred by
-    // the typing-guard the moment focus leaves), but blur fires on the mousedown that
-    // begins a "send" CLICK — a synchronous render() would replaceChildren and detach
-    // the very button mid-click (losing the click) and the status nodes submit() writes
-    // to. The next subscription delta (a claimed job heartbeats often) or the 30s ticker
-    // re-renders instead; the only residual is typing an instruct as the worker resolves,
-    // which lands a harmless unconsumed inbox row.
     const btn = el('button', { textContent: buttonText });
     const submit = async () => {
       const text = ta.value.trim();
@@ -407,7 +335,6 @@ export default async function mount(conn, root) {
 
   const renderDetail = (j) => {
     const promptOpen = shownJob === j.id && !!detail.querySelector('dd.block details')?.open;
-    // Drafts are per-job: switching to a different job's detail starts fresh.
     if (shownJob !== j.id) { ctlDraft.send_triage = ''; ctlDraft.instruct = ''; shownJob = j.id; }
     const back = el('button', { className: 'primary', textContent: '‹ back' });
     back.addEventListener('click', close);
@@ -415,11 +342,8 @@ export default async function mount(conn, root) {
     row(dl, 'id', `#${j.id}`);
     row(dl, 'type', j.type);
     row(dl, 'priority', j.priority);
-    if (j.model) row(dl, 'model', `${j.model} (explicit route, bothouse#132)`);
+    if (j.model) row(dl, 'model', `${j.model} (explicit route)`);
     row(dl, 'status', j.status);
-    // Remediation disposition (botq#remediation): present only on a hub-facing drop.
-    // 'unremediated' = a drop still needing a root-cause+fix+requeue (run `botq
-    // remediate`); 'remediated' shows the fix ref + requeue disposition + who.
     if (j.remediation === 'unremediated') {
       row(dl, 'remediation', 'UNREMEDIATED — needs `botq remediate`');
     } else if (j.remediation === 'remediated') {
@@ -429,26 +353,17 @@ export default async function mount(conn, root) {
     }
     row(dl, 'verdict', typeof j.verdict === 'string' ? j.verdict : '');
     row(dl, 'completion', j.completion, { block: true });
-    // The payload prompt — the job's full description (bddap/bothouse#151). Gated on
-    // field PRESENCE, not truthiness: null/'' = a payload-invariant violation on a
-    // current server (render the placeholder), absent = a pre-#151 server (render
-    // nothing). Plain text via textContent per the XSS discipline; collapsed behind
-    // <details> when long so the metadata grid stays scannable.
     if ('prompt' in j) {
       const text = j.prompt || '(payload has no prompt)';
       dl.append(el('dt', { textContent: 'prompt' }));
       const body = text.length > 500
         ? el('details', { open: promptOpen }, [
-            // slice by code point (spread), not code unit, so an emoji straddling the
-            // cut can't render as a lone surrogate; 241 units always cover 120 points.
             el('summary', { textContent: [...text.slice(0, 241)].slice(0, 120).join('').replace(/\s+/g, ' ') + '…' }),
             el('div', { textContent: text }),
           ])
         : el('span', { textContent: text });
       dl.append(block('prompt', body));
     }
-    // Fork lineage: a thin prompt is self-explaining when the worker forked a
-    // transcript (context rides the fork). Presence-gated like `prompt`.
     if ('fork_source' in j) row(dl, 'origin', j.fork_source ? `fork of ${j.fork_source}` : 'fresh');
     row(dl, 'result', j.result, { block: true });
     row(dl, 'tokens', j.tokens_spent ? j.tokens_spent.toLocaleString() : '');
@@ -463,12 +378,6 @@ export default async function mount(conn, root) {
       el('div', { className: 'bar' }, [back, el('h2', { textContent: `job #${j.id}` })]),
       dl,
     ];
-    // Message THREAD (bothouse#162), then owner controls, then the ordinary log —
-    // all ABOVE the log so they stay reachable on a phone without scrolling past a
-    // long live tail. Thread entries are the kind==='message' log rows (keyed on
-    // the kind tag — structure, not emoji matching): owner posts from this page,
-    // hub/gate inbox entries, and delivery bounces, each echoing back through the
-    // normal subscription the moment it lands — a reply is visible right here.
     const logs = Array.isArray(j.log) ? j.log : [];
     const msgs = logs.filter((e) => e.kind === 'message');
     const rest = logs.filter((e) => e.kind !== 'message');
@@ -476,12 +385,6 @@ export default async function mount(conn, root) {
       sections.push(el('div', { className: 'log-head', textContent: `messages (${msgs.length})` }));
       sections.push(el('div', { className: 'log-list' }, msgs.map(renderMsgEntry)));
     }
-    // Owner controls (owner→server writes, post-auth). A triage MESSAGE attaches to
-    // any job (a note for the hub). An INSTRUCT only reaches a RUNNING worker (it
-    // drains its inbox with `botq inbox` between steps), so it's offered only while
-    // `claimed` (the literal mirrors `Status::Claimed.tag()` on the Rust side —
-    // search there if the tag is renamed); the server bounces an instruct that
-    // races a job going terminal, and the bounce shows up in the thread above.
     sections.push(el('div', { className: 'ctl-head', textContent: 'owner controls' }));
     sections.push(controlBox(j, 'send_triage', 'send a message to the triage queue',
       'a note for the hub about this job…', 'send to triage'));
@@ -500,17 +403,6 @@ export default async function mount(conn, root) {
     detail.replaceChildren(...sections);
   };
 
-  // --- pluggable panels ---
-  // A panel's HTML is operator-authored (the command is configured by an owner with
-  // full machine access), but we still frame it in a SANDBOXED iframe so it can neither
-  // run script in the dashboard's origin (the page holds the auth token) nor disturb
-  // the surrounding layout/JS. `sandbox="allow-same-origin"` WITHOUT `allow-scripts`:
-  // no script can execute in the frame at all, so the same-origin grant is inert for
-  // the child — it exists only so the PARENT may read the rendered document to auto-size
-  // the frame to its content. This is the same "let the browser's sandbox enforce
-  // isolation, never innerHTML untrusted-ish markup ourselves" approach the per-kind log
-  // rendering uses (text→textContent, image/svg→<img>); HTML's right primitive is the
-  // iframe. The page CSP (img-src 'self' data:) still applies inside the frame.
   const renderPanelBody = (p) => {
     if (p.error && !p.html) return el('div', { className: 'panel-err', textContent: p.error });
     const frame = el('iframe', { className: 'panel-frame', loading: 'lazy', title: p.name });
@@ -532,20 +424,15 @@ export default async function mount(conn, root) {
     if (p.error) head.append(el('span', { className: 'panel-badge', textContent: `⚠ ${p.error}`, title: p.error }));
     return el('div', { className: 'panel-box' }, [head, renderPanelBody(p)]);
   };
-  // Visibility is gated by view (list only) AND non-emptiness, applied from both the
-  // top-level render() and renderPanels() so either trigger keeps it correct.
   const applyPanelVisibility = () => {
     panelsRegion.style.display = (openId == null && panels.size) ? '' : 'none';
   };
-  // Rebuild the whole region on any panel change. Panels update on their own (slow)
-  // cadence, so the rare iframe reload is a non-issue; jobs deltas never call this.
   const renderPanels = () => {
     const rows = [...panels.values()].sort((a, b) => a.name.localeCompare(b.name));
     panelsRegion.replaceChildren(...rows.map(renderPanel));
     applyPanelVisibility();
   };
 
-  // --- top-level render: pick a view, keep chrome current ---
   const render = () => {
     renderChips();
     renderTypeOptions();
@@ -553,13 +440,7 @@ export default async function mount(conn, root) {
       bar.style.display = list.style.display = 'none';
       detail.style.display = '';
       const j = jobs.get(openId);
-      // Include dependents (a whole-map derivation, not part of `j`) so the detail
-      // rebuilds when a NEW job starts depending on the open one.
       const sig = openId + ' ' + JSON.stringify(j) + ' deps:' + dependentsOf(openId).join(',');
-      // Don't rebuild while the owner is typing in a control box — a rebuild replaces
-      // the textarea node, dropping focus/caret mid-instruction. `lastDetailSig` stays
-      // stale so the deferred delta is applied on the next render after they blur/submit
-      // (drafts are preserved either way, but skipping also keeps focus).
       const typing = detail.contains(document.activeElement) && document.activeElement.tagName === 'TEXTAREA';
       if (sig !== lastDetailSig && !typing && !ctlBusy) {
         const showing = lastDetailSig != null && shownJob === j.id;
@@ -578,14 +459,10 @@ export default async function mount(conn, root) {
     applyPanelVisibility();   // panels show only in list view; keep that in sync with the view
   };
 
-  // Re-render every 30s so the "Ns ago" stamps stay honest with no deltas.
   const ticker = setInterval(render, 30000);
 
   try {
     await conn.subscribe('jobs', (msg) => {
-      // Jobs and panels share the one subscription (the protocol multiplexes a single
-      // bi-stream). Job frames re-render the list; panel frames rebuild only the panels
-      // region (no need to touch the job list) — see the server's `subscribe`.
       if (msg.jobs) { jobs.clear(); for (const j of msg.jobs) jobs.set(j.id, j); render(); applyDeepLink(); }
       else if (msg.job_delta) { jobs.set(msg.job_delta.id, msg.job_delta); render(); applyDeepLink(); }
       else if (msg.panels) { panels.clear(); for (const p of msg.panels) panels.set(p.name, p); renderPanels(); }
