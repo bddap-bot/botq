@@ -11,8 +11,7 @@
     {
       "paths": [
         "docs/ui/**",
-        "test/**",
-        "test-map.json"
+        "test/**"
       ],
       "tests": [
         "node --test test/*.test.js"
