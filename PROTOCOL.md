@@ -1,7 +1,7 @@
 # botq dashboard protocol, version 0
 
-The contract between this page and a `botq dash` endpoint. The page depends on
-nothing else; any server that speaks this protocol can serve it.
+The contract between this page and a `botq dash` endpoint. Any server that speaks
+it can serve the page.
 
 ## Token
 
@@ -39,8 +39,9 @@ little-endian `u32` byte length, then that many bytes of UTF-8 JSON.
    - `{"panel_removed": "<name>"}`.
 
 After `sub_jobs` the client sends only reply-free writes, `{"op": "send_triage" |
-"instruct", "job_id": <int>, "text": "<string>"}`: a note filed to the queue's
-triage inbox, or an instruction to the worker holding a `claimed` job.
+"instruct", "job_id": <int>, "text": "<string>"}`: a note about the job for
+whoever triages the queue, or an instruction to the agent running a `claimed`
+job.
 
 ## Job
 
@@ -51,12 +52,13 @@ Every field except `id` and `status` is optional.
 | `id` | int | |
 | `status` | string | `queued` `blocked` `deferred` `claimed` `verifying` `resolved` `dropped` |
 | `type`, `model`, `claimed_by`, `session_id` | string | |
-| `priority`, `tokens_spent` | int | |
-| `prompt`, `completion`, `result`, `verdict` | string | the brief, its summary, the worker's result, the gate's verdict |
+| `priority` | string or int | `beef` is highlighted |
+| `tokens_spent` | int | |
+| `prompt`, `completion`, `result`, `verdict` | string | the task, a one-line summary, the worker's report, the acceptance check's verdict |
 | `depends_on` | int[] | job ids |
-| `fork_source` | int or string | the session this job forked; empty when fresh |
+| `fork_source` | int or string | what this job's session forked from; empty when fresh |
 | `created_at`, `claimed_at`, `last_heartbeat`, `resolved_at` | epoch seconds | |
-| `remediation` | string | `unremediated` or `remediated`, for a failed job |
+| `remediation` | string | `unremediated` or `remediated` |
 | `remediation_fix`, `remediation_requeue`, `remediated_by` | string | how it was remediated |
 | `log` | LogEntry[] | |
 

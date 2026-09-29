@@ -1,8 +1,8 @@
 # botq dashboard
 
-A live, mobile-friendly view of a botq job
-queue — served not from a server but straight off the machine running the queue,
-over an end-to-end-encrypted [iroh](https://iroh.computer) tunnel.
+A live, mobile-friendly view of a botq job queue (botq runs coding agents as
+queued jobs) — served not from a server but straight off the machine running the
+queue, over an end-to-end-encrypted [iroh](https://iroh.computer) tunnel.
 
 This repo (GitHub Pages, served from `docs/`) is only a **thin, stable bootstrap**:
 it loads a small wasm iroh client, dials the `botq dash` endpoint by its public
@@ -20,9 +20,9 @@ classical trust root, and only for this one static page).
 2. Open the Pages URL, paste the token, **Connect**. The token is saved locally so a
    reload reconnects; **Forget token** clears it.
 3. On a phone: open the URL, paste, then **Add to Home Screen** for an app-like
-   launcher (PWA — no service worker in v1).
+   launcher (PWA).
 
 The page shows every job with its id, type, state, priority, completion brief,
-tokens, timestamps, and gate verdict, updating live as the queue moves.
+tokens, timestamps, and acceptance verdict, updating live as the queue moves.
 
 The page speaks the protocol in [`PROTOCOL.md`](PROTOCOL.md).

@@ -7,7 +7,6 @@
 //! connection is e2e-encrypted to the node's public key (carried in the ticket),
 //! so no CA/DNS trust is involved (MITM-proof past the GH-Pages bootstrap).
 //!
-//! Proves the API + toolchain for the dashboard spec's `wasm/` wrapper crate.
 //! Single-threaded wasm: state lives in thread-locals; nothing needs `Send`.
 
 use std::cell::RefCell;
@@ -117,9 +116,9 @@ pub async fn recv() -> Result<Vec<u8>, JsError> {
 }
 
 /// Send one length-prefixed frame and DO NOT wait for a reply — a fire-and-forget
-/// owner→server write. `send` (above) always awaits a response on the SAME bi-stream,
+/// client→server write. `send` (above) always awaits a response on the SAME bi-stream,
 /// so it can't be used while a subscription monopolizes the recv half with its push
-/// loop; `send_only` writes on the send half ONLY, so the dashboard can post owner
+/// loop; `send_only` writes on the send half ONLY, so the dashboard can post
 /// writes (a triage message / a worker instruct) WHILE subscribed without racing the
 /// pushed deltas the recv loop is consuming.
 #[wasm_bindgen]

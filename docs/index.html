@@ -120,7 +120,7 @@ const conn = {
   },
   // A fire-and-forget WRITE: writes on the send half only and awaits NO reply, so it
   // is safe to call WHILE subscribed — it never races the subscription's recv loop
-  // (the footgun `request` would hit). This is the owner→server write channel the UI
+  // (the footgun `request` would hit). This is the client→server write channel the UI
   // uses for `send_triage` / `instruct`. Resolves once the bytes are flushed; a
   // transport failure rejects.
   async sendOnly(obj) { await send_only(jsonBytes(obj)); },
@@ -160,7 +160,7 @@ async function start(token) {
     URL.revokeObjectURL(url);
 
     setStatus('connected', 'ok');
-    // The UI handle: `subscribe` (the read stream) + `send` (fire-and-forget owner
+    // The UI handle: `subscribe` (the read stream) + `send` (fire-and-forget
     // writes). It deliberately does NOT expose `request` (send→recv), so the UI can't
     // race a reply-awaiting call against its own subscription's recv loop — that
     // footgun stays gone by construction. `send` is reply-free, so it composes safely
