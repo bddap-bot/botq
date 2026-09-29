@@ -1,6 +1,6 @@
 //! botq-dash-wasm — browser (wasm32) iroh client for the botq dashboard and any
-//! sibling page that speaks length-prefixed frames to a bothouse endpoint (the
-//! caller names the ALPN).
+//! page that speaks length-prefixed frames to an iroh endpoint (the caller names
+//! the ALPN).
 //!
 //! Relay-only by construction: in a browser iroh cannot open UDP sockets, so the
 //! N0 endpoint preset's only viable path is WebSocket → relay → native node. The

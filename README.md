@@ -1,6 +1,6 @@
 # botq dashboard
 
-A live, mobile-friendly view of the [botq](https://github.com/bddap/bothouse) job
+A live, mobile-friendly view of a botq job
 queue — served not from a server but straight off the machine running the queue,
 over an end-to-end-encrypted [iroh](https://iroh.computer) tunnel.
 
@@ -24,3 +24,5 @@ classical trust root, and only for this one static page).
 
 The page shows every job with its id, type, state, priority, completion brief,
 tokens, timestamps, and gate verdict, updating live as the queue moves.
+
+The page speaks the protocol in [`PROTOCOL.md`](PROTOCOL.md).

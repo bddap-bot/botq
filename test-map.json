@@ -35,6 +35,7 @@
     {
       "paths": [
         "README.md",
+        "PROTOCOL.md",
         ".gitignore"
       ],
       "tests": [],

@@ -385,9 +385,9 @@ export default async function mount(conn, root) {
       sections.push(el('div', { className: 'log-head', textContent: `messages (${msgs.length})` }));
       sections.push(el('div', { className: 'log-list' }, msgs.map(renderMsgEntry)));
     }
-    sections.push(el('div', { className: 'ctl-head', textContent: 'owner controls' }));
+    sections.push(el('div', { className: 'ctl-head', textContent: 'controls' }));
     sections.push(controlBox(j, 'send_triage', 'send a message to the triage queue',
-      'a note for the hub about this job…', 'send to triage'));
+      'a note about this job…', 'send to triage'));
     if (j.status === 'claimed') {
       sections.push(controlBox(j, 'instruct', 'instruct / redirect the running worker',
         'an instruction the worker will pick up between steps…', 'instruct worker'));

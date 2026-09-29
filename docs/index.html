@@ -147,7 +147,7 @@ async function start(token) {
     if (!authResp.ok) return setStatus('auth rejected — wrong secret', 'err');
 
     // Auth OK → persist the token, then scrub it from the DOM and switch to the
-    // saved-state UI so the secret is never displayed again (owner request).
+    // saved-state UI so the secret is never displayed again.
     localStorage.setItem(KEY, token.trim());
     $('token').value = '';
     showSavedState(true);

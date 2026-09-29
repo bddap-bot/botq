@@ -1,7 +1,7 @@
 # Dev shell for botq-dash-wasm — the browser (wasm32) iroh client whose bindgen
 # output ships in ../docs (botq_dash_wasm.js + botq_dash_wasm_bg.wasm).
 #
-# Pinned bothouse nixpkgs + oxalica rust-overlay for a rust toolchain that includes
+# Pinned nixpkgs + oxalica rust-overlay for a rust toolchain that includes
 # the wasm32-unknown-unknown std and a matching wasm-bindgen-cli (=0.2.121, which the
 # Cargo.toml pins wasm-bindgen to). clang_multi: iroh's tls-ring dep compiles `ring`,
 # whose C sources must be built FOR wasm32 — that needs a 32-bit-capable clang (per n0
@@ -14,10 +14,15 @@
 #   - the nix cc-wrapper injects `-fzero-call-used-regs=used-gpr` (a hardening flag)
 #     which clang rejects for the wasm32 target. NIX_HARDENING_ENABLE="" drops it.
 let
-  rustOverlay = import (builtins.fetchTarball
-    "https://github.com/oxalica/rust-overlay/archive/master.tar.gz");
-  sources = import /home/bot/repos/bddap/bothouse/nix/nix/sources.nix;
-  pkgs = import sources.nixpkgs { overlays = [ rustOverlay ]; };
+  rustOverlay = import (builtins.fetchTarball {
+    url = "https://github.com/oxalica/rust-overlay/archive/49b6548d31019e8bfe9d4415193ac1df3c48f53a.tar.gz";
+    sha256 = "19rs2qj207sgnz8k60ll2hvxyc7mwmghqpmx6s1r8z30mh6zj3iw";
+  });
+  nixpkgs = builtins.fetchTarball {
+    url = "https://github.com/NixOS/nixpkgs/archive/e2587caef70cea85dd97d7daab492899902dbf5d.tar.gz";
+    sha256 = "14jrgz4z2m8n1c8qwcla44kdy9kd7x0xnwfyrajnyvnhkxbnnqf1";
+  };
+  pkgs = import nixpkgs { overlays = [ rustOverlay ]; };
   rust = pkgs.rust-bin.stable.latest.default.override {
     targets = [ "wasm32-unknown-unknown" ];
   };
