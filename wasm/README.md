@@ -6,7 +6,7 @@ Pages serves; the `index.html` bootstrap imports it to dial the native `botq das
 endpoint over iroh and run the dashboard UI.
 
 Exports (`src/lib.rs`): `init`, `connect(ticket)`, `send(bytes)` (request→response),
-`recv()` (one pushed frame), and `send_only(bytes)` (fire-and-forget owner→server
+`recv()` (one pushed frame), and `send_only(bytes)` (fire-and-forget client→server
 write — used while subscribed for `send_triage` / `instruct`, since it awaits no reply
 and so can't race the subscription's recv loop).
 
