@@ -22,7 +22,8 @@ classical trust root, and only for this one static page).
 3. On a phone: open the URL, paste, then **Add to Home Screen** for an app-like
    launcher (PWA).
 
-The page shows every job with its id, type, state, priority, completion brief,
-tokens, timestamps, and acceptance verdict, updating live as the queue moves.
+The dashboard provides a history timeline and an operational queue. Its UI is
+packaged with the endpoint release; this repository contains only the bootstrap
+and transport client.
 
 The page speaks the protocol in [`PROTOCOL.md`](PROTOCOL.md).

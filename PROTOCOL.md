@@ -30,8 +30,14 @@ little-endian `u32` byte length, then that many bytes of UTF-8 JSON.
      every frame the server sends from then on;
    - `conn.send(obj)` sends one frame and awaits no reply.
 
-   `docs/ui/bundle.js` is the reference module.
-3. `{"op": "sub_jobs"}`: the server replies with `{"jobs": [Job, …]}`, then pushes
+   The endpoint packages the UI module with its server release. This bootstrap
+   has no separate dashboard implementation. Each connection selects one
+   subscription; switching subscriptions requires reconnecting.
+3. Select `sub_jobs` or `sub_history` (described below).
+
+### Queue subscription
+
+`{"op": "sub_jobs"}`: the server replies with `{"jobs": [Job, …]}`, then pushes
    any of
    - `{"job_delta": Job}` — a job's full new state, keyed by `id`;
    - `{"panels": [Panel, …]}` — the full panel set;
@@ -42,6 +48,48 @@ After `sub_jobs` the client sends only reply-free writes, `{"op": "send_triage" 
 "instruct", "job_id": <int>, "text": "<string>"}`: a note about the job for
 whoever triages the queue, or an instruction to the agent running a `claimed`
 job.
+
+### History subscription
+
+`{"op":"sub_history"}` sends a full snapshot immediately, then checks every
+five seconds and sends another full snapshot only when its serialized contents
+change. The initial range is the 24 hours ending at subscription time; it does
+not advance automatically.
+
+```json
+{"history":{"range":{"start":1790395200,"end":1790420400},"rows":[],"truncated":false}}
+```
+
+While subscribed, `conn.send({op: 'history_range', start, end})` selects a new
+range and causes a fresh snapshot, even if unchanged. Bounds are integer Unix
+seconds: `start >= 0`, `end > start`, and at most 31 days apart. Invalid JSON,
+operations, or ranges return `{"error":"<message>"}` without changing the range
+or ending the subscription. History control frames exceeding 1024 bytes close
+the stream. Queue instructions are not supported on this subscription.
+
+Rows are ordered by claim time (enqueue time when absent), then id. At most
+10,000 rows are returned; `truncated: true` means narrow the range. Rows include
+queue wait overlapping the window and can have execution outside the window;
+clients clip plotted intervals and keep missing claims in a table.
+
+| row field | type | meaning |
+|---|---|---|
+| `id` | int | job id |
+| `issue` | string or null | validated `owner/repository#number` issue key |
+| `class` | string | job type |
+| `enqueued` | epoch seconds | creation time |
+| `claimed` | epoch seconds or null | latest recorded claim; earlier attempts are unavailable |
+| `ended` | epoch seconds or null | recorded or estimated end; null for live runs or unavailable end times |
+| `end_kind` | string | `live`, `resolved`, or `estimated` |
+| `verdict` | string | `accepted`, `failed`, `dropped`, `cancelled`, `running`, or `unknown` |
+| `ram_cap_mb` | int or null | execution cap; currently null because it was not recorded |
+| `ram_reserved_mb` | int or null | maximum reservation sampled for this claim |
+| `ram_peak_mb` | int or null | recorded job peak memory |
+
+For non-live rows, the end uses resolution time, then the last heartbeat, gate
+evaluation time, or claim time, in that order. An absent resolution time is
+marked estimated. History projects existing ledger metadata only: no payload,
+instruction, result text, log content, or verdict details are sent.
 
 ## Job
 

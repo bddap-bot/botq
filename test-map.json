@@ -10,16 +10,6 @@
     },
     {
       "paths": [
-        "docs/ui/**",
-        "test/**"
-      ],
-      "tests": [
-        "node --test test/*.test.js"
-      ],
-      "why": "the served dashboard module's pure helpers"
-    },
-    {
-      "paths": [
         "docs/**"
       ],
       "tests": [],
