@@ -10,10 +10,21 @@
     },
     {
       "paths": [
+        "docs/index.html",
+        "docs/sw.js",
+        "test/**"
+      ],
+      "tests": [
+        "nix-shell test/shell.nix --run 'python3 test/page_test.py'"
+      ],
+      "why": "the bootstrap page keeps the token in memory only, erases a copy saved by an earlier version, and its service worker caches nothing; a stubbed transport stands in for the wasm client"
+    },
+    {
+      "paths": [
         "docs/**"
       ],
       "tests": [],
-      "why": "the GH-Pages bootstrap (wasm client + static page) has no headless harness; verified by opening the page"
+      "why": "the wasm client artifacts, manifest and icons have no headless harness; verified by opening the page"
     },
     {
       "paths": [
