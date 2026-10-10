@@ -5,7 +5,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-cargo build --release --target wasm32-unknown-unknown
+# Panic and tracing locations embed source paths; remap them so the shipped wasm
+# carries no builder-specific path; crate paths are already relative.
+cargo build --release --target wasm32-unknown-unknown \
+  --config "target.wasm32-unknown-unknown.rustflags=['--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo']"
 
 # wasm-bindgen glue for the browser (`--target web`): emits pkg/botq_dash_wasm.js +
 # pkg/botq_dash_wasm_bg.wasm. We ship the bindgen output directly — cargo's
