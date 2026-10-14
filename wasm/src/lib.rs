@@ -26,7 +26,7 @@ thread_local! {
 }
 
 fn js_err(e: impl Into<anyhow::Error>) -> JsError {
-    JsError::new(&e.into().to_string())
+    JsError::new(&format!("{:#}", e.into()))
 }
 
 /// Install panic hook + tracing. Call once at startup. (`#[wasm_bindgen(start)]`
