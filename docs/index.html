@@ -49,12 +49,13 @@
 <body>
 <header>
   <h1>botq</h1>
-  <span id="status">paste token to connect</span>
+  <span id="status"></span>
+  <button id="forget" class="hidden">Forget token</button>
   <a href="https://bddap-bot.github.io/voice/">🎙 voice</a>
 </header>
 
 <div id="gate">
-  <textarea id="token" placeholder="paste your `botq dash-token` here" autocomplete="off" spellcheck="false" inputmode="text"></textarea>
+  <textarea id="token" aria-label="Connection token" placeholder="botq dash-token" autocomplete="off" spellcheck="false" inputmode="text"></textarea>
   <div class="row">
     <button id="connect" class="primary">Connect</button>
   </div>
@@ -65,6 +66,7 @@
 <script type="module">
 import wbgInit, { init as wasmInit, connect, send, recv, send_only } from './botq_dash_wasm.js';
 
+const KEY = 'botq.token';
 const $ = (id) => document.getElementById(id);
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -131,6 +133,8 @@ async function start(token) {
     const authResp = await conn.request({ auth: t.secret });
     if (!authResp.ok) return setStatus('auth rejected — wrong secret', 'err');
 
+    localStorage.setItem(KEY, token.trim());
+    $('forget').classList.remove('hidden');
     connected = true;
     $('gate').classList.add('hidden');
 
@@ -168,18 +172,29 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
-// Earlier versions saved the token and cached the page; erase both copies.
-localStorage.removeItem('botq.token');
+$('forget').addEventListener('click', () => {
+  localStorage.removeItem(KEY);
+  location.reload();
+});
+
+// Older shells cached the page.
 caches.delete('botq-shell-v1');
 
 function startFromFragment() {
   const fragment = location.hash.slice(1);
-  if (!fragment) return;
+  if (!fragment || fragment.startsWith('/')) return false;
   history.replaceState(null, '', location.pathname + location.search);
   if (!connected) start(fragment);
+  return true;
 }
 window.addEventListener('hashchange', startFromFragment);
-startFromFragment();
+if (!startFromFragment()) {
+  const saved = localStorage.getItem(KEY);
+  if (saved) {
+    $('forget').classList.remove('hidden');
+    start(saved);
+  }
+}
 </script>
 </body>
 </html>

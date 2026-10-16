@@ -11,7 +11,21 @@ from playwright.sync_api import Page, sync_playwright
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 STORAGE_KEY = "botq.token"
 
-STUB_UI = base64.urlsafe_b64encode(b"export default () => {};").decode().rstrip("=")
+STUB_UI = base64.urlsafe_b64encode(b"""
+export default (_, root) => {
+  for (const route of ['history', 'queue', 'job/42']) {
+    const link = document.createElement('a');
+    link.textContent = route;
+    link.href = '#/' + route;
+    link.onclick = event => {
+      event.preventDefault();
+      location.hash = '#/' + route;
+      location.reload();
+    };
+    root.append(link);
+  }
+};
+""").decode().rstrip("=")
 STUB_WASM_JS = """
 const dec = new TextDecoder();
 const enc = new TextEncoder();
@@ -67,8 +81,9 @@ def stored(page: Page) -> dict[str, object]:
 NOTHING_STORED = {"local": [], "session": [], "cookie": "", "indexedDB": [], "caches": []}
 
 
-def assert_token_only_in_memory(page: Page) -> None:
-    assert stored(page) == NOTHING_STORED, stored(page)
+def assert_saved_token_is_not_exposed(page: Page) -> None:
+    assert stored(page) == {**NOTHING_STORED, "local": [STORAGE_KEY]}, stored(page)
+    assert page.evaluate("localStorage.getItem('botq.token')") == TOKEN
     assert TOKEN not in page.content(), "the token is in the DOM"
     assert TOKEN not in page.url, "the token is in the address bar"
     assert page.input_value("#token") == ""
@@ -78,21 +93,32 @@ def wait_connected(page: Page) -> None:
     page.wait_for_function("document.getElementById('status').textContent === 'connected'")
 
 
-def test_saved_token_is_erased(page: Page, base: str) -> None:
+def test_saved_token_reconnects(page: Page, base: str) -> None:
     page.goto(base)
     page.evaluate(f"localStorage.setItem({json.dumps(STORAGE_KEY)}, {json.dumps(TOKEN)})")
     page.reload()
     page.wait_for_load_state("networkidle")
-    assert stored(page) == NOTHING_STORED, "a token saved by an earlier version survives a load"
+    wait_connected(page)
+    assert_saved_token_is_not_exposed(page)
 
 
-def test_pasted_token_is_not_stored(page: Page, base: str) -> None:
+def test_pasted_token_is_saved(page: Page, base: str) -> None:
     page.goto(base)
     page.fill("#token", TOKEN)
     page.click("#connect")
     wait_connected(page)
     page.wait_for_timeout(500)
-    assert_token_only_in_memory(page)
+    assert_saved_token_is_not_exposed(page)
+
+
+def test_pasted_token_survives_reload(page: Page, base: str) -> None:
+    page.goto(base)
+    page.fill("#token", TOKEN)
+    page.click("#connect")
+    wait_connected(page)
+    page.reload()
+    page.wait_for_function("document.getElementById('status').textContent === 'connected'", timeout=5000)
+    assert_saved_token_is_not_exposed(page)
 
 
 def test_rejected_token_is_not_kept(page: Page, base: str) -> None:
@@ -109,14 +135,14 @@ def test_fragment_token_connects(page: Page, base: str) -> None:
     page.goto(base + "#" + TOKEN)
     wait_connected(page)
     page.wait_for_timeout(500)
-    assert_token_only_in_memory(page)
+    assert_saved_token_is_not_exposed(page)
 
 
 def test_fragment_on_an_open_page_connects(page: Page, base: str) -> None:
     page.goto(base)
     page.evaluate(f"location.hash = {json.dumps(TOKEN)}")
     wait_connected(page)
-    assert_token_only_in_memory(page)
+    assert_saved_token_is_not_exposed(page)
     page.go_back()
     assert page.url == base, "the token URL stays in session history"
 
@@ -132,6 +158,46 @@ def test_fragment_while_connected_is_ignored(page: Page, base: str) -> None:
     assert WRONG_TOKEN not in page.url
 
 
+def test_navigation_keeps_token_and_route(page: Page, base: str) -> None:
+    page.goto(base + "#" + TOKEN)
+    wait_connected(page)
+    for route in ("history", "queue", "job/42"):
+        page.locator(f'a[href="#/{route}"]').click()
+        page.wait_for_load_state("networkidle")
+        wait_connected(page)
+        assert page.url == base + "#/" + route, page.url
+        assert_saved_token_is_not_exposed(page)
+        page.reload()
+        wait_connected(page)
+        assert page.url == base + "#/" + route, page.url
+        assert_saved_token_is_not_exposed(page)
+
+
+def test_forget_token_stops_reconnecting(page: Page, base: str) -> None:
+    page.goto(base + "#" + TOKEN)
+    wait_connected(page)
+    page.click("#forget")
+    page.wait_for_load_state("networkidle")
+    assert stored(page) == NOTHING_STORED
+    assert page.locator("#gate").is_visible()
+    assert page.locator("#forget").is_hidden()
+    page.reload()
+    page.wait_for_load_state("networkidle")
+    assert page.locator("#gate").is_visible()
+    assert page.evaluate("globalThis.auths || 0") == 0
+
+
+def test_bad_fragment_keeps_saved_token(page: Page, base: str) -> None:
+    page.goto(base + "#" + TOKEN)
+    wait_connected(page)
+    page.goto(base + "?retry#" + WRONG_TOKEN)
+    page.wait_for_function("document.getElementById('status').textContent.startsWith('auth rejected')")
+    assert_saved_token_is_not_exposed(page)
+    page.reload()
+    wait_connected(page)
+    assert_saved_token_is_not_exposed(page)
+
+
 def test_old_shell_cache_is_erased(page: Page, base: str) -> None:
     page.goto(base + "manifest.webmanifest")
     page.evaluate(
@@ -143,12 +209,16 @@ def test_old_shell_cache_is_erased(page: Page, base: str) -> None:
 
 
 TESTS: list[tuple[Callable[[Page, str], None], bool]] = [
-    (test_saved_token_is_erased, False),
-    (test_pasted_token_is_not_stored, False),
+    (test_pasted_token_survives_reload, False),
+    (test_saved_token_reconnects, False),
+    (test_pasted_token_is_saved, False),
     (test_rejected_token_is_not_kept, False),
     (test_fragment_token_connects, False),
     (test_fragment_on_an_open_page_connects, False),
     (test_fragment_while_connected_is_ignored, False),
+    (test_navigation_keeps_token_and_route, False),
+    (test_forget_token_stops_reconnecting, False),
+    (test_bad_fragment_keeps_saved_token, False),
     (test_old_shell_cache_is_erased, True),
 ]
 

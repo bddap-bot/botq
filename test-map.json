@@ -17,7 +17,7 @@
       "tests": [
         "nix-shell test/shell.nix --run 'python3 test/page_test.py'"
       ],
-      "why": "the bootstrap page keeps the token in memory only, erases a copy saved by an earlier version, and its service worker caches nothing; a stubbed transport stands in for the wasm client"
+      "why": "the bootstrap saves authenticated tokens, reconnects on reload without exposing them, forgets them on request, and its service worker caches nothing; a stubbed transport stands in for the wasm client"
     },
     {
       "paths": [

@@ -17,8 +17,8 @@ classical trust root, and only for this one static page).
 1. On the machine running botq: `botq dash` (the long-lived endpoint) and
    `botq dash-token` (prints your token — it embeds the node's public key, its
    relay, and the auth secret; treat it like a password).
-2. Open the Pages URL, paste the token, **Connect**. The page keeps the token in
-   memory only, so each visit asks for it again. Opening `<Pages URL>#<token>`
+2. Open the Pages URL, paste the token, **Connect**. Successful connections save the token
+   on this device and reconnect on reload. **Forget token** removes it. Opening `<Pages URL>#<token>`
    connects directly and drops the token from the address bar.
 3. On a phone: open the URL, paste, then **Add to Home Screen** for an app-like
    launcher (PWA).
